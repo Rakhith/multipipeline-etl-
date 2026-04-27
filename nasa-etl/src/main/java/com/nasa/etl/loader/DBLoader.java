@@ -200,16 +200,17 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                String[] kv = line.split("\t", 3);
-                if (kv.length < 3) continue;
+                String[] kv = line.split("\t", 4);
+                if (kv.length < 4) continue;
 
-                String date = kv[0];
-                int code = Integer.parseInt(kv[1].trim());
-                String[] val = kv[2].split("\t");
+                int rowBatchId = Integer.parseInt(kv[0].trim());
+                String date = kv[1];
+                int code = Integer.parseInt(kv[2].trim());
+                String[] val = kv[3].split("\t");
                 if (val.length < 2) continue;
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, code);
                 ps.setLong(5, Long.parseLong(val[0].trim()));
@@ -237,15 +238,16 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                int tab1 = line.indexOf('\t');
-                if (tab1 < 0) continue;
+                String[] kv = line.split("\t", 3);
+                if (kv.length < 3) continue;
 
-                String path = line.substring(0, tab1);
-                String[] val = line.substring(tab1 + 1).split("\t");
+                int rowBatchId = Integer.parseInt(kv[0].trim());
+                String path = kv[1];
+                String[] val = kv[2].split("\t");
                 if (val.length < 3) continue;
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setString(3, path);
                 ps.setLong(4, Long.parseLong(val[0].trim()));
                 ps.setLong(5, Long.parseLong(val[1].trim()));
@@ -273,16 +275,17 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                String[] kv = line.split("\t", 3);
-                if (kv.length < 3) continue;
+                String[] kv = line.split("\t", 4);
+                if (kv.length < 4) continue;
 
-                String date = kv[0];
-                int hour = Integer.parseInt(kv[1].trim());
-                String[] val = kv[2].split("\t");
+                int rowBatchId = Integer.parseInt(kv[0].trim());
+                String date = kv[1];
+                int hour = Integer.parseInt(kv[2].trim());
+                String[] val = kv[3].split("\t");
                 if (val.length < 4) continue;
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, hour);
                 ps.setLong(5, Long.parseLong(val[0].trim()));

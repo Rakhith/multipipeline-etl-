@@ -27,9 +27,9 @@ import java.util.*;
  * top-20 selection (all data lands on one reducer keyed by resource path;
  * a cleanup() phase sorts and emits only the top 20).
  *
- * Map  output key  : resource_path
+ * Map  output key  : "batch_id\tresource_path"
  * Map  output value: "host\tbytes"
- * Reduce output key: resource_path
+ * Reduce output key: "batch_id\tresource_path"
  * Reduce output value: "request_count\ttotal_bytes\tdistinct_host_count"
  */
 public class Query2TopResources {
@@ -42,10 +42,12 @@ public class Query2TopResources {
 
         private int batchSize;
         private int lineCount = 0;
+        private int batchOffset = 0;
 
         @Override
         protected void setup(Context ctx) {
             batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
+            batchOffset = ctx.getTaskAttemptID().getTaskID().getId() * 1_000_000;
         }
 
         @Override
@@ -54,7 +56,7 @@ public class Query2TopResources {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
             lineCount++;
-            if (lineCount % batchSize == 1) { /* batch start */ }
+            int batchId = batchOffset + ((lineCount - 1) / batchSize) + 1;
             if (lineCount % batchSize == 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }
@@ -71,7 +73,7 @@ public class Query2TopResources {
 
             // Value: host TAB bytes
             String val = rec.getHost() + "\t" + rec.getBytesTransferred();
-            ctx.write(new Text(path), new Text(val));
+            ctx.write(new Text(batchId + "\t" + path), new Text(val));
         }
 
         @Override
@@ -88,26 +90,32 @@ public class Query2TopResources {
     public static class TopResourceReducer
             extends Reducer<Text, Text, Text, Text> {
 
-        // Accumulate ALL paths in memory, then select top-20 in cleanup()
-        // (dataset is ~3 M records with ~50 K distinct paths – fits in heap)
-        private final Map<String, long[]> accumulator = new HashMap<>();
-        // accumulator value: [requestCount, totalBytes]
-        private final Map<String, Set<String>> hostSets = new HashMap<>();
+        private static class ResourceStats {
+            private long requestCount;
+            private long totalBytes;
+            private final Set<String> hosts = new HashSet<>();
+        }
+
+        private final Map<Integer, Map<String, ResourceStats>> byBatch = new HashMap<>();
 
         @Override
         protected void reduce(Text key, Iterable<Text> values, Context ctx) {
-            String path = key.toString();
-            long[] stats = accumulator.computeIfAbsent(path, k -> new long[2]);
-            Set<String> hosts = hostSets.computeIfAbsent(
-                path, k -> new HashSet<>());
+            String[] keyParts = key.toString().split("\t", 2);
+            if (keyParts.length < 2) return;
+
+            int batchId = Integer.parseInt(keyParts[0]);
+            String path = keyParts[1];
+            Map<String, ResourceStats> paths =
+                byBatch.computeIfAbsent(batchId, k -> new HashMap<>());
+            ResourceStats stats = paths.computeIfAbsent(path, k -> new ResourceStats());
 
             for (Text val : values) {
                 String[] parts = val.toString().split("\t", 2);
-                stats[0]++;                               // request count
+                stats.requestCount++;
                 if (parts.length == 2) {
-                    try { stats[1] += Long.parseLong(parts[1]); }
+                    try { stats.totalBytes += Long.parseLong(parts[1]); }
                     catch (NumberFormatException ignored) {}
-                    hosts.add(parts[0]);                  // host
+                    stats.hosts.add(parts[0]);
                 }
             }
         }
@@ -116,19 +124,23 @@ public class Query2TopResources {
         protected void cleanup(Context ctx)
                 throws IOException, InterruptedException {
 
-            // Sort by request count descending, take top 20
-            List<Map.Entry<String, long[]>> entries =
-                new ArrayList<>(accumulator.entrySet());
-            entries.sort((a, b) -> Long.compare(b.getValue()[0], a.getValue()[0]));
+            List<Integer> batchIds = new ArrayList<>(byBatch.keySet());
+            Collections.sort(batchIds);
 
-            int limit = Math.min(20, entries.size());
-            for (int i = 0; i < limit; i++) {
-                String path   = entries.get(i).getKey();
-                long[] stats  = entries.get(i).getValue();
-                int    dHosts = hostSets.getOrDefault(path, Collections.emptySet()).size();
-                // Output: request_count TAB total_bytes TAB distinct_host_count
-                String out = stats[0] + "\t" + stats[1] + "\t" + dHosts;
-                ctx.write(new Text(path), new Text(out));
+            for (Integer batchId : batchIds) {
+                List<Map.Entry<String, ResourceStats>> entries =
+                    new ArrayList<>(byBatch.get(batchId).entrySet());
+                entries.sort((a, b) -> Long.compare(
+                    b.getValue().requestCount, a.getValue().requestCount));
+
+                int limit = Math.min(20, entries.size());
+                for (int i = 0; i < limit; i++) {
+                    String path = entries.get(i).getKey();
+                    ResourceStats stats = entries.get(i).getValue();
+                    String out = stats.requestCount + "\t" + stats.totalBytes
+                               + "\t" + stats.hosts.size();
+                    ctx.write(new Text(batchId + "\t" + path), new Text(out));
+                }
             }
         }
     }
