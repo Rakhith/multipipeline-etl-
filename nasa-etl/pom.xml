@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+           http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.nasa.etl</groupId>
+  <artifactId>nasa-etl</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+  <name>NASA HTTP Log ETL – Hadoop MapReduce</name>
+
+  <properties>
+    <maven.compiler.source>8</maven.compiler.source>
+    <maven.compiler.target>8</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <hadoop.version>3.3.6</hadoop.version>
+  </properties>
+
+  <dependencies>
+
+    <!-- =================== Hadoop =================== -->
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-client</artifactId>
+      <version>${hadoop.version}</version>
+      <!--
+        Mark as 'provided' because hadoop-client jars are already on the
+        Hadoop cluster classpath when the job runs.
+        Remove 'provided' only if building a fully standalone fat-jar
+        that must include Hadoop itself (e.g., for local testing without
+        a Hadoop installation).
+      -->
+      <scope>provided</scope>
+    </dependency>
+
+    <!-- =================== JDBC drivers =================== -->
+    <!-- PostgreSQL -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.3</version>
+    </dependency>
+
+    <!-- MySQL (optional – include if using MySQL instead of Postgres) -->
+    <dependency>
+      <groupId>com.mysql</groupId>
+      <artifactId>mysql-connector-j</artifactId>
+      <version>8.3.0</version>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+
+      <!-- ---- Compiler ---- -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.12.1</version>
+        <configuration>
+          <source>8</source>
+          <target>8</target>
+        </configuration>
+      </plugin>
+
+      <!--
+        ---- Fat JAR (shade plugin) ----
+        Produces nasa-etl-1.0.0-shaded.jar that includes the JDBC
+        drivers.  Hadoop jars are excluded (scope=provided above).
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.2</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <shadedArtifactAttached>true</shadedArtifactAttached>
+              <shadedClassifierName>shaded</shadedClassifierName>
+
+              <transformers>
+                <!-- Set the Main-Class so 'hadoop jar' works without specifying it -->
+                <transformer implementation=
+                    "org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>com.nasa.etl.ETLDriver</mainClass>
+                </transformer>
+                <!-- Merge service files (needed by some JDBC drivers) -->
+                <transformer implementation=
+                    "org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+
+              <filters>
+                <!-- Remove signature files that would break the shaded jar -->
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+    </plugins>
+  </build>
+</project>
