@@ -209,7 +209,7 @@ public class DBLoader {
                 long totalBytes = Long.parseLong(cols[4].trim());
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, code);
                 ps.setLong(5, requestCount);
@@ -246,7 +246,7 @@ public class DBLoader {
                 long dHosts = Long.parseLong(cols[4].trim());
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setString(3, path);
                 ps.setLong(4, reqCount);
                 ps.setLong(5, totBytes);
@@ -285,7 +285,7 @@ public class DBLoader {
                 long dHosts = Long.parseLong(cols[6].trim());
 
                 ps.setInt(1, runId);
-                ps.setInt(2, batchId);
+                ps.setInt(2, rowBatchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, hour);
                 ps.setLong(5, errCount);

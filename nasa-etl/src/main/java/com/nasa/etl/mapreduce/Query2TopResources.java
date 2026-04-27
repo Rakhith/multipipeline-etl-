@@ -27,9 +27,9 @@ import java.util.*;
  * top-20 selection (all data lands on one reducer keyed by resource path;
  * a cleanup() phase sorts and emits only the top 20).
  *
- * Map  output key  : resource_path
+ * Map  output key  : "batch_id\tresource_path"
  * Map  output value: "host\tbytes"
- * Reduce output key: resource_path
+ * Reduce output key: "batch_id\tresource_path"
  * Reduce output value: "request_count\ttotal_bytes\tdistinct_host_count"
  */
 public class Query2TopResources {
@@ -42,10 +42,12 @@ public class Query2TopResources {
 
         private int batchSize;
         private int lineCount = 0;
+        private int batchOffset = 0;
 
         @Override
         protected void setup(Context ctx) {
             batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
+            batchOffset = ctx.getTaskAttemptID().getTaskID().getId() * 1_000_000;
         }
 
         @Override
@@ -54,7 +56,7 @@ public class Query2TopResources {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
             lineCount++;
-            if (lineCount % batchSize == 1) { /* batch start */ }
+            int batchId = batchOffset + ((lineCount - 1) / batchSize) + 1;
             if (lineCount % batchSize == 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }

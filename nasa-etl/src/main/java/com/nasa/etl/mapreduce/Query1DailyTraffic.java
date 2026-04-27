@@ -21,7 +21,7 @@ import java.io.IOException;
  *   request_count   – total HTTP requests
  *   total_bytes     – sum of bytes transferred
  *
- * Output key  : "log_date\tstatus_code"
+ * Output key  : "batch_id\tlog_date\tstatus_code"
  * Output value: "request_count\ttotal_bytes"
  */
 public class Query1DailyTraffic {
@@ -34,11 +34,12 @@ public class Query1DailyTraffic {
 
         private int  batchSize;
         private int  lineCount = 0;
-        private int  batchId   = 0;
+        private int  batchOffset = 0;
 
         @Override
         protected void setup(Context ctx) {
             batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
+            batchOffset = ctx.getTaskAttemptID().getTaskID().getId() * 1_000_000;
         }
 
         @Override
@@ -48,10 +49,7 @@ public class Query1DailyTraffic {
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
             lineCount++;
 
-            // Batch boundary tracking
-            if (lineCount % batchSize == 1) {
-                batchId++;
-            }
+            int batchId = batchOffset + ((lineCount - 1) / batchSize) + 1;
             if (lineCount % batchSize == 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }

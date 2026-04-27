@@ -5,7 +5,6 @@ package com.nasa.etl.common;
  * Pipeline-agnostic: works for MapReduce, MongoDB, Pig, and Hive.
  * We have kept this parser has common, the different pipelines have seperate loggers
  * within thier folders to do further processing 
- * Always a temporary in-memory object — never persisted directly.
  */
 public class LogRecord {
     private String  host;
@@ -99,6 +98,7 @@ public class LogRecord {
             String[] dateParts = dateTime[0].split("/");
             int day   = Integer.parseInt(dateParts[0]);
             int month = monthIndex(dateParts[1]);
+            if (month == -1) { r.malformed = true; return; }
             int year  = Integer.parseInt(dateParts[2]);
             r.logDate = String.format("%04d-%02d-%02d", year, month, day);
             r.logHour = Integer.parseInt(dateTime[1]);
@@ -111,7 +111,7 @@ public class LogRecord {
         for (int i = 0; i < MONTHS.length; i++) {
             if (MONTHS[i].equalsIgnoreCase(mon)) return i + 1;
         }
-        return 1;
+        return -1;
     }
 
     private static void parseRequest(LogRecord r, String req) {
