@@ -30,7 +30,7 @@ public class Reporter {
         String url   = args[0];
         String user  = args[1];
         String pass  = args[2];
-        String runId = args.length >= 4 ? args[3] : null;
+        Integer runId = args.length >= 4 ? Integer.valueOf(args[3]) : null;
 
         // Load driver
         try { Class.forName("org.postgresql.Driver"); }
@@ -60,7 +60,7 @@ public class Reporter {
 
     // ----------------------------------------------------------------- banner
 
-    private static void printBanner(String runId) {
+    private static void printBanner(int runId) {
         String line = "=".repeat(90);
         System.out.println(line);
         System.out.println("  NASA HTTP Log Analytics – Hadoop MapReduce Pipeline – Execution Report");
@@ -71,37 +71,40 @@ public class Reporter {
 
     // ----------------------------------------------------------------- metadata
 
-    private static void printRunMetadata(Connection conn, String runId)
+    private static void printRunMetadata(Connection conn, int runId)
             throws SQLException {
         String sql =
-            "SELECT query_name, pipeline_name, batch_size, batch_count, " +
-            "       avg_batch_size, total_records, malformed_count, " +
-            "       runtime_ms, execution_time " +
+            "SELECT pipeline_name, batch_size, total_batches, avg_batch_size, " +
+            "       total_records, malformed_count, q1_runtime_ms, " +
+            "       q2_runtime_ms, q3_runtime_ms, runtime_ms, executed_at " +
             "FROM run_metadata " +
-            "WHERE run_id = ? " +
-            "ORDER BY id";
+            "WHERE run_id = ?";
 
         System.out.println("\n  EXECUTION METADATA");
         System.out.println("  " + "-".repeat(88));
-        System.out.printf("  %-32s %-20s %8s %8s %12s %10s %10s %10s%n",
-            "Query", "Pipeline", "Batch", "Batches", "AvgBatch",
+        System.out.printf("  %-20s %8s %8s %12s %10s %10s %10s%n",
+            "Pipeline", "Batch", "Batches", "AvgBatch",
             "Valid", "Malformed", "Runtime(ms)");
         System.out.println("  " + "-".repeat(88));
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, runId);
+            ps.setInt(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     System.out.printf(
-                        "  %-32s %-20s %8d %8d %12.1f %10d %10d %10d%n",
-                        rs.getString("query_name"),
+                        "  %-20s %8d %8d %12.1f %10d %10d %10d%n",
                         rs.getString("pipeline_name"),
                         rs.getInt   ("batch_size"),
-                        rs.getLong  ("batch_count"),
+                        rs.getLong  ("total_batches"),
                         rs.getDouble("avg_batch_size"),
                         rs.getLong  ("total_records"),
                         rs.getLong  ("malformed_count"),
                         rs.getLong  ("runtime_ms"));
+                    System.out.printf(
+                        "  Q runtimes: Q1=%,d ms | Q2=%,d ms | Q3=%,d ms%n",
+                        rs.getLong("q1_runtime_ms"),
+                        rs.getLong("q2_runtime_ms"),
+                        rs.getLong("q3_runtime_ms"));
                 }
             }
         }
@@ -110,7 +113,7 @@ public class Reporter {
 
     // ----------------------------------------------------------------- Q1
 
-    private static void printQuery1(Connection conn, String runId)
+    private static void printQuery1(Connection conn, int runId)
             throws SQLException {
         System.out.println("\n\n  QUERY 1 – Daily Traffic Summary");
         System.out.println("  " + "-".repeat(55));
@@ -125,7 +128,7 @@ public class Reporter {
             "ORDER BY log_date, status_code";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, runId);
+            ps.setInt(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 int rowCount = 0;
                 while (rs.next()) {
@@ -144,7 +147,7 @@ public class Reporter {
 
     // ----------------------------------------------------------------- Q2
 
-    private static void printQuery2(Connection conn, String runId)
+    private static void printQuery2(Connection conn, int runId)
             throws SQLException {
         System.out.println("\n\n  QUERY 2 – Top 20 Requested Resources");
         System.out.println("  " + "-".repeat(85));
@@ -161,7 +164,7 @@ public class Reporter {
             "LIMIT 20";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, runId);
+            ps.setInt(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 int rank = 1;
                 while (rs.next()) {
@@ -181,7 +184,7 @@ public class Reporter {
 
     // ----------------------------------------------------------------- Q3
 
-    private static void printQuery3(Connection conn, String runId)
+    private static void printQuery3(Connection conn, int runId)
             throws SQLException {
         System.out.println("\n\n  QUERY 3 – Hourly Error Analysis");
         System.out.println("  " + "-".repeat(88));
@@ -198,7 +201,7 @@ public class Reporter {
             "ORDER BY log_date, log_hour";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, runId);
+            ps.setInt(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 int rowCount = 0;
                 while (rs.next()) {
@@ -223,11 +226,11 @@ public class Reporter {
 
     // ----------------------------------------------------------------- helper
 
-    private static String resolveLatestRunId(Connection conn) throws SQLException {
-        String sql = "SELECT run_id FROM run_metadata ORDER BY id DESC LIMIT 1";
+    private static Integer resolveLatestRunId(Connection conn) throws SQLException {
+        String sql = "SELECT run_id FROM run_metadata ORDER BY run_id DESC LIMIT 1";
         try (Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(sql)) {
-            return rs.next() ? rs.getString("run_id") : null;
+            return rs.next() ? rs.getInt("run_id") : null;
         }
     }
 }

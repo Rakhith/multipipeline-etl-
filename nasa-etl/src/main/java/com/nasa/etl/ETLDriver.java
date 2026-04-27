@@ -18,7 +18,6 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
 import java.sql.Connection;
-import java.util.UUID;
 
 /**
  * ETLDriver – Main entry point for the NASA HTTP Log ETL Framework.
@@ -47,7 +46,8 @@ import java.util.UUID;
  */
 public class ETLDriver extends Configured implements Tool {
 
-    // ------------------------------------------------------------------ run
+    private static final String DEFAULT_PIPELINE_NAME = "Hadoop-MapReduce";
+
 
     @Override
     public int run(String[] args) throws Exception {
@@ -58,6 +58,7 @@ public class ETLDriver extends Configured implements Tool {
         String dbUrl      = null;
         String dbUser     = null;
         String dbPass     = null;
+        String pipelineName = DEFAULT_PIPELINE_NAME;
         int    batchSize  = BatchedLineInputFormat.DEFAULT_BATCH_SIZE;
 
         for (int i = 0; i < args.length; i++) {
@@ -67,6 +68,7 @@ public class ETLDriver extends Configured implements Tool {
                 case "--db-url" : dbUrl      = args[++i]; break;
                 case "--db-user": dbUser     = args[++i]; break;
                 case "--db-pass": dbPass     = args[++i]; break;
+                case "--pipeline-name": pipelineName = args[++i]; break;
                 case "--batch"  : batchSize  = Integer.parseInt(args[++i]); break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
@@ -92,8 +94,11 @@ public class ETLDriver extends Configured implements Tool {
             Class.forName("com.mysql.cj.jdbc.Driver");
         } catch (ClassNotFoundException ignored) {}
 
-        String runId = UUID.randomUUID().toString();
-        conf.set(DBLoader.RUN_ID_KEY, runId);
+        // ---- open DB, create tables, reserve run id ----
+        Connection conn = DBLoader.openConnection(conf);
+        DBLoader.createTables(conn);
+        int runId = DBLoader.createRunMetadata(conn, pipelineName, batchSize);
+        conf.setInt(DBLoader.RUN_ID_KEY, runId);
 
         System.out.println("========================================");
         System.out.println(" NASA HTTP Log ETL – Hadoop MapReduce  ");
@@ -101,16 +106,14 @@ public class ETLDriver extends Configured implements Tool {
         System.out.printf(" Run ID     : %s%n", runId);
         System.out.printf(" Input      : %s%n", inputDir);
         System.out.printf(" Output base: %s%n", outputBase);
+        System.out.printf(" Pipeline   : %s%n", pipelineName);
         System.out.printf(" Batch size : %,d%n", batchSize);
         System.out.printf(" DB URL     : %s%n", dbUrl);
         System.out.println("========================================\n");
 
-        // ---- open DB, create tables ----
-        Connection conn = DBLoader.openConnection(conf);
-        DBLoader.createTables(conn);
-
         // ======== START RUNTIME CLOCK ========
         long globalStart = System.currentTimeMillis();
+        RunMetadata metadata = new RunMetadata(runId, pipelineName, batchSize);
 
         // ---- Q1 ----
         String q1Out = outputBase + "/q1";
@@ -122,9 +125,8 @@ public class ETLDriver extends Configured implements Tool {
         if (!q1ok) { System.err.println("Q1 failed"); return 2; }
 
         Counters q1c = q1Job.getCounters();
-        DBLoader.loadQuery1(conn, conf, q1Out, runId, "1");
-        saveMetadata(conn, runId, "Q1-DailyTrafficSummary", batchSize,
-                     q1Start, q1End, q1c);
+        DBLoader.loadQuery1(conn, conf, q1Out, runId, 0);
+        saveBatchMetadata(conn, metadata, runId, 1, "Q1", q1Start, q1End, q1c);
 
         // ---- Q2 ----
         String q2Out = outputBase + "/q2";
@@ -136,9 +138,8 @@ public class ETLDriver extends Configured implements Tool {
         if (!q2ok) { System.err.println("Q2 failed"); return 3; }
 
         Counters q2c = q2Job.getCounters();
-        DBLoader.loadQuery2(conn, conf, q2Out, runId, "2");
-        saveMetadata(conn, runId, "Q2-TopRequestedResources", batchSize,
-                     q2Start, q2End, q2c);
+        DBLoader.loadQuery2(conn, conf, q2Out, runId, 0);
+        saveBatchMetadata(conn, metadata, runId, 2, "Q2", q2Start, q2End, q2c);
 
         // ---- Q3 ----
         String q3Out = outputBase + "/q3";
@@ -150,13 +151,14 @@ public class ETLDriver extends Configured implements Tool {
         if (!q3ok) { System.err.println("Q3 failed"); return 4; }
 
         Counters q3c = q3Job.getCounters();
-        DBLoader.loadQuery3(conn, conf, q3Out, runId, "3");
-        saveMetadata(conn, runId, "Q3-HourlyErrorAnalysis", batchSize,
-                     q3Start, q3End, q3c);
+        DBLoader.loadQuery3(conn, conf, q3Out, runId, 0);
+        saveBatchMetadata(conn, metadata, runId, 3, "Q3", q3Start, q3End, q3c);
 
         // ======== STOP RUNTIME CLOCK ========
         long globalEnd   = System.currentTimeMillis();
         long totalMs     = globalEnd - globalStart;
+        metadata.setRuntimeMs(totalMs);
+        DBLoader.updateRunMetadata(conn, metadata);
 
         conn.close();
 
@@ -177,22 +179,41 @@ public class ETLDriver extends Configured implements Tool {
 
     // ----------------------------------------------------------------- helpers
 
-    private static void saveMetadata(Connection conn, String runId,
-                                     String queryName, int batchSize,
-                                     long startMs, long endMs,
-                                     Counters counters) throws Exception {
+    private static void saveBatchMetadata(Connection conn, RunMetadata metadata,
+                                          int runId, int queryNumber,
+                                          String queryName,
+                                          long startMs, long endMs,
+                                          Counters counters) throws Exception {
         long valid     = counters.findCounter(ETLCounters.VALID_RECORDS)    .getValue();
         long malformed = counters.findCounter(ETLCounters.MALFORMED_RECORDS).getValue();
         long batches   = counters.findCounter(ETLCounters.BATCHES_PROCESSED).getValue();
+        long runtimeMs = endMs - startMs;
 
-        RunMetadata meta = new RunMetadata(runId, queryName, batchSize);
-        meta.finish(startMs, endMs, valid, malformed, batches);
-        DBLoader.saveRunMetadata(conn, meta);
+        metadata.addQueryStats(queryNumber, runtimeMs, valid, malformed, batches);
+        saveLogicalBatchRows(conn, runId, queryName, valid, runtimeMs, batches);
 
         System.out.printf("[%s] runtime=%,d ms | valid=%,d | malformed=%,d "
                           + "| batches=%,d | avg_batch=%.1f%n",
-                          queryName, meta.getRuntimeMs(), valid, malformed,
-                          batches, meta.getAvgBatchSize());
+                          queryName, runtimeMs, valid, malformed,
+                          batches, metadata.getAvgBatchSize());
+    }
+
+    private static void saveLogicalBatchRows(Connection conn, int runId,
+                                             String queryName, long records,
+                                             long runtimeMs, long batches)
+            throws Exception {
+        long safeBatches = Math.max(1, batches);
+        long baseRecords = records / safeBatches;
+        long extraRecords = records % safeBatches;
+        long baseRuntime = runtimeMs / safeBatches;
+        long extraRuntime = runtimeMs % safeBatches;
+
+        for (int i = 1; i <= safeBatches; i++) {
+            long batchRecords = baseRecords + (i <= extraRecords ? 1 : 0);
+            long batchRuntime = baseRuntime + (i <= extraRuntime ? 1 : 0);
+            DBLoader.saveBatchMetadata(conn, runId, i, queryName,
+                                       batchRecords, batchRuntime);
+        }
     }
 
     private static void deleteIfExists(Configuration conf, String path)
@@ -210,6 +231,7 @@ public class ETLDriver extends Configured implements Tool {
             "  --db-url  <jdbc-url>         \\\n" +
             "  --db-user <username>         \\\n" +
             "  --db-pass <password>         \\\n" +
+            "  [--pipeline-name <name>]     \\\n" +
             "  [--batch  <batch-size>]      \n\n" +
             "Examples:\n" +
             "  JDBC URL for PostgreSQL: jdbc:postgresql://localhost:5432/nasa_etl\n" +

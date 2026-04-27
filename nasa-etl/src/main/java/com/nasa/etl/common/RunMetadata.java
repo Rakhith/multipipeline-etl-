@@ -1,77 +1,72 @@
 package com.nasa.etl.common;
 
-import java.time.Instant;
-
 /**
- * Captures execution metadata for one query's MapReduce run.
- * This is serialised to JSON and stored in the run_metadata table.
+ * Run-level execution metadata shared by all pipelines.
+ * Mirrors the run_metadata table in scripts/schema.sql.
  */
 public class RunMetadata {
 
-    private String  pipelineName  = "Hadoop-MapReduce";
-    private String  runId;           // UUID assigned by driver
-    private String  queryName;
-    private long    startEpochMs;
-    private long    endEpochMs;
-    private long    runtimeMs;
-    private int     batchSize;       // configured batch size
-    private long    totalRecords;    // valid records processed
-    private long    malformedCount;
-    private long    batchCount;
-    private double  avgBatchSize;
-    private String  executionTime;   // ISO-8601
+    private int    runId;
+    private String pipelineName;
+    private int    batchSize;
+    private long   totalBatches;
+    private double avgBatchSize;
+    private long   totalRecords;
+    private long   malformedCount;
+    private long   q1RuntimeMs;
+    private long   q2RuntimeMs;
+    private long   q3RuntimeMs;
+    private long   runtimeMs;
 
     public RunMetadata() {}
 
-    public RunMetadata(String runId, String queryName, int batchSize) {
-        this.runId     = runId;
-        this.queryName = queryName;
+    public RunMetadata(String pipelineName, int batchSize) {
+        this.pipelineName = pipelineName;
         this.batchSize = batchSize;
     }
 
-    // -------------------------------------------------------- computed helpers
-
-    public void finish(long startMs, long endMs, long totalRecords,
-                       long malformedCount, long batchCount) {
-        this.startEpochMs   = startMs;
-        this.endEpochMs     = endMs;
-        this.runtimeMs      = endMs - startMs;
-        this.totalRecords   = totalRecords;
-        this.malformedCount = malformedCount;
-        this.batchCount     = batchCount;
-        this.avgBatchSize   = batchCount > 0
-                              ? (double) totalRecords / batchCount : 0.0;
-        this.executionTime  = Instant.ofEpochMilli(startMs).toString();
+    public RunMetadata(int runId, String pipelineName, int batchSize) {
+        this(pipelineName, batchSize);
+        this.runId = runId;
     }
 
-    // ------------------------------------------------- simple JSON serialiser
-
-    public String toJson() {
-        return String.format(
-            "{\"pipeline\":\"%s\",\"runId\":\"%s\",\"query\":\"%s\"," +
-            "\"runtimeMs\":%d,\"batchSize\":%d,\"totalRecords\":%d," +
-            "\"malformedCount\":%d,\"batchCount\":%d,\"avgBatchSize\":%.2f," +
-            "\"executionTime\":\"%s\"}",
-            pipelineName, runId, queryName, runtimeMs, batchSize,
-            totalRecords, malformedCount, batchCount, avgBatchSize, executionTime);
+    public void addQueryStats(int queryNumber, long queryRuntimeMs,
+                              long records, long malformed, long batches) {
+        if (queryNumber == 1) {
+            totalRecords = records;
+            malformedCount = malformed;
+            totalBatches = batches;
+            avgBatchSize = totalBatches > 0
+                ? (double) totalRecords / totalBatches : 0.0;
+            q1RuntimeMs = queryRuntimeMs;
+        } else if (queryNumber == 2) {
+            q2RuntimeMs = queryRuntimeMs;
+        } else if (queryNumber == 3) {
+            q3RuntimeMs = queryRuntimeMs;
+        }
     }
 
-    // ------------------------------------------------- getters / setters
+    public int getRunId()              { return runId; }
+    public String getPipelineName()    { return pipelineName; }
+    public int getBatchSize()          { return batchSize; }
+    public long getTotalBatches()      { return totalBatches; }
+    public double getAvgBatchSize()    { return avgBatchSize; }
+    public long getTotalRecords()      { return totalRecords; }
+    public long getMalformedCount()    { return malformedCount; }
+    public long getQ1RuntimeMs()       { return q1RuntimeMs; }
+    public long getQ2RuntimeMs()       { return q2RuntimeMs; }
+    public long getQ3RuntimeMs()       { return q3RuntimeMs; }
+    public long getRuntimeMs()         { return runtimeMs; }
 
-    public String getPipelineName()  { return pipelineName; }
-    public String getRunId()         { return runId; }
-    public String getQueryName()     { return queryName; }
-    public long   getRuntimeMs()     { return runtimeMs; }
-    public int    getBatchSize()     { return batchSize; }
-    public long   getTotalRecords()  { return totalRecords; }
-    public long   getMalformedCount(){ return malformedCount; }
-    public long   getBatchCount()    { return batchCount; }
-    public double getAvgBatchSize()  { return avgBatchSize; }
-    public String getExecutionTime() { return executionTime; }
-
-    public void setRunId(String runId)                { this.runId = runId; }
-    public void setQueryName(String queryName)        { this.queryName = queryName; }
-    public void setBatchSize(int batchSize)           { this.batchSize = batchSize; }
-    public long getStartEpochMs()                     { return startEpochMs; }
-    public long getEndEpochMs()                       { return endEpochMs; }
+    public void setRunId(int runId)                       { this.runId = runId; }
+    public void setPipelineName(String pipelineName)      { this.pipelineName = pipelineName; }
+    public void setBatchSize(int batchSize)               { this.batchSize = batchSize; }
+    public void setTotalBatches(long totalBatches)        { this.totalBatches = totalBatches; }
+    public void setAvgBatchSize(double avgBatchSize)      { this.avgBatchSize = avgBatchSize; }
+    public void setTotalRecords(long totalRecords)        { this.totalRecords = totalRecords; }
+    public void setMalformedCount(long malformedCount)    { this.malformedCount = malformedCount; }
+    public void setQ1RuntimeMs(long q1RuntimeMs)          { this.q1RuntimeMs = q1RuntimeMs; }
+    public void setQ2RuntimeMs(long q2RuntimeMs)          { this.q2RuntimeMs = q2RuntimeMs; }
+    public void setQ3RuntimeMs(long q3RuntimeMs)          { this.q3RuntimeMs = q3RuntimeMs; }
+    public void setRuntimeMs(long runtimeMs)              { this.runtimeMs = runtimeMs; }
 }
