@@ -17,5 +17,32 @@ target/
 # Maven
 .m2/
 
-# Logs
+# Logs (execution logs)
 *.log
+etl_run.log
+pipeline_output.log
+
+# Large dataset files
+NASA_access_log_*.gz
+NASA_access_log_*
+
+# Maven temp files
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# Database
+*.db
+*.sqlite
+
+# HDFS/Hadoop temp
+/tmp/
+tmp/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

@@ -55,7 +55,7 @@
   <build>
     <plugins>
 
-      <!-- ---- Compiler ---- -->
+      <!-- Compiler -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -67,7 +67,7 @@
       </plugin>
 
       <!--
-        ---- Fat JAR (shade plugin) ----
+        Fat JAR (shade plugin)
         Produces nasa-etl-1.0.0-shaded.jar that includes the JDBC
         drivers.  Hadoop jars are excluded (scope=provided above).
       -->
@@ -84,7 +84,7 @@
               <shadedClassifierName>shaded</shadedClassifierName>
 
               <transformers>
-                <!-- Set the Main-Class so 'hadoop jar' works without specifying it -->
+                <!-- Set the Main-Class so hadoop jar works without specifying it -->
                 <transformer implementation=
                     "org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>com.nasa.etl.ETLDriver</mainClass>
