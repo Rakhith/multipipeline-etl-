@@ -65,8 +65,9 @@ public class Query1DailyTraffic {
 
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
 
-            // Key: date TAB status_code
-            String outKey   = rec.getLogDate() + "\t" + rec.getStatusCode();
+            int currentBatch = ((lineCount - 1) / batchSize) + 1;
+            // Key: batchId TAB date TAB status_code
+            String outKey   = currentBatch + "\t" + rec.getLogDate() + "\t" + rec.getStatusCode();
             // Value: 1 TAB bytes
             String outValue = "1\t" + rec.getBytesTransferred();
 

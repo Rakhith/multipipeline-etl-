@@ -64,7 +64,8 @@ public class Query3HourlyError {
             }
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
 
-            String key = rec.getLogDate() + "\t" + rec.getLogHour();
+            int currentBatch = ((lineCount - 1) / batchSize) + 1;
+            String key = currentBatch + "\t" + rec.getLogDate() + "\t" + rec.getLogHour();
 
             // is_error flag  (1 = error, 0 = not error)
             int status  = rec.getStatusCode();

@@ -188,8 +188,7 @@ public class DBLoader {
     }
 
     public static void loadQuery1(Connection conn, Configuration conf,
-                                  String hdfsOutputDir, int runId,
-                                  int batchId)
+                                  String hdfsOutputDir, int runId)
             throws Exception {
         String sql =
             "INSERT INTO q1_daily_traffic " +
@@ -200,20 +199,21 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                String[] kv = line.split("\t", 3);
-                if (kv.length < 3) continue;
+                String[] cols = line.split("\t");
+                if (cols.length < 5) continue;
 
-                String date = kv[0];
-                int code = Integer.parseInt(kv[1].trim());
-                String[] val = kv[2].split("\t");
-                if (val.length < 2) continue;
+                int batchId = Integer.parseInt(cols[0].trim());
+                String date = cols[1];
+                int code = Integer.parseInt(cols[2].trim());
+                long requestCount = Long.parseLong(cols[3].trim());
+                long totalBytes = Long.parseLong(cols[4].trim());
 
                 ps.setInt(1, runId);
                 ps.setInt(2, batchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, code);
-                ps.setLong(5, Long.parseLong(val[0].trim()));
-                ps.setLong(6, Long.parseLong(val[1].trim()));
+                ps.setLong(5, requestCount);
+                ps.setLong(6, totalBytes);
                 ps.addBatch();
                 loaded++;
             }
@@ -224,8 +224,7 @@ public class DBLoader {
     }
 
     public static void loadQuery2(Connection conn, Configuration conf,
-                                  String hdfsOutputDir, int runId,
-                                  int batchId)
+                                  String hdfsOutputDir, int runId)
             throws Exception {
         String sql =
             "INSERT INTO q2_top_resources " +
@@ -237,19 +236,21 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                int tab1 = line.indexOf('\t');
-                if (tab1 < 0) continue;
+                String[] cols = line.split("\t");
+                if (cols.length < 5) continue;
 
-                String path = line.substring(0, tab1);
-                String[] val = line.substring(tab1 + 1).split("\t");
-                if (val.length < 3) continue;
+                int batchId = Integer.parseInt(cols[0].trim());
+                String path = cols[1];
+                long reqCount = Long.parseLong(cols[2].trim());
+                long totBytes = Long.parseLong(cols[3].trim());
+                long dHosts = Long.parseLong(cols[4].trim());
 
                 ps.setInt(1, runId);
                 ps.setInt(2, batchId);
                 ps.setString(3, path);
-                ps.setLong(4, Long.parseLong(val[0].trim()));
-                ps.setLong(5, Long.parseLong(val[1].trim()));
-                ps.setLong(6, Long.parseLong(val[2].trim()));
+                ps.setLong(4, reqCount);
+                ps.setLong(5, totBytes);
+                ps.setLong(6, dHosts);
                 ps.addBatch();
                 loaded++;
             }
@@ -260,8 +261,7 @@ public class DBLoader {
     }
 
     public static void loadQuery3(Connection conn, Configuration conf,
-                                  String hdfsOutputDir, int runId,
-                                  int batchId)
+                                  String hdfsOutputDir, int runId)
             throws Exception {
         String sql =
             "INSERT INTO q3_hourly_error " +
@@ -273,22 +273,25 @@ public class DBLoader {
         int loaded = 0;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             for (String line : lines) {
-                String[] kv = line.split("\t", 3);
-                if (kv.length < 3) continue;
+                String[] cols = line.split("\t");
+                if (cols.length < 7) continue;
 
-                String date = kv[0];
-                int hour = Integer.parseInt(kv[1].trim());
-                String[] val = kv[2].split("\t");
-                if (val.length < 4) continue;
+                int batchId = Integer.parseInt(cols[0].trim());
+                String date = cols[1];
+                int hour = Integer.parseInt(cols[2].trim());
+                long errCount = Long.parseLong(cols[3].trim());
+                long totCount = Long.parseLong(cols[4].trim());
+                double errRate = Double.parseDouble(cols[5].trim());
+                long dHosts = Long.parseLong(cols[6].trim());
 
                 ps.setInt(1, runId);
                 ps.setInt(2, batchId);
                 ps.setDate(3, java.sql.Date.valueOf(date));
                 ps.setInt(4, hour);
-                ps.setLong(5, Long.parseLong(val[0].trim()));
-                ps.setLong(6, Long.parseLong(val[1].trim()));
-                ps.setDouble(7, Double.parseDouble(val[2].trim()));
-                ps.setLong(8, Long.parseLong(val[3].trim()));
+                ps.setLong(5, errCount);
+                ps.setLong(6, totCount);
+                ps.setDouble(7, errRate);
+                ps.setLong(8, dHosts);
                 ps.addBatch();
                 loaded++;
             }

@@ -125,7 +125,7 @@ public class ETLDriver extends Configured implements Tool {
         if (!q1ok) { System.err.println("Q1 failed"); return 2; }
 
         Counters q1c = q1Job.getCounters();
-        DBLoader.loadQuery1(conn, conf, q1Out, runId, 0);
+        DBLoader.loadQuery1(conn, conf, q1Out, runId);
         saveBatchMetadata(conn, metadata, runId, 1, "Q1", q1Start, q1End, q1c);
 
         // ---- Q2 ----
@@ -138,7 +138,7 @@ public class ETLDriver extends Configured implements Tool {
         if (!q2ok) { System.err.println("Q2 failed"); return 3; }
 
         Counters q2c = q2Job.getCounters();
-        DBLoader.loadQuery2(conn, conf, q2Out, runId, 0);
+        DBLoader.loadQuery2(conn, conf, q2Out, runId);
         saveBatchMetadata(conn, metadata, runId, 2, "Q2", q2Start, q2End, q2c);
 
         // ---- Q3 ----
@@ -151,7 +151,7 @@ public class ETLDriver extends Configured implements Tool {
         if (!q3ok) { System.err.println("Q3 failed"); return 4; }
 
         Counters q3c = q3Job.getCounters();
-        DBLoader.loadQuery3(conn, conf, q3Out, runId, 0);
+        DBLoader.loadQuery3(conn, conf, q3Out, runId);
         saveBatchMetadata(conn, metadata, runId, 3, "Q3", q3Start, q3End, q3c);
 
         // ======== STOP RUNTIME CLOCK ========

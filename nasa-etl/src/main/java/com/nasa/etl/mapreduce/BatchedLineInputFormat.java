@@ -43,6 +43,11 @@ public class BatchedLineInputFormat extends FileInputFormat<LongWritable, Text> 
         return new LineRecordReader();
     }
 
+    @Override
+    protected boolean isSplitable(JobContext context, Path filename) {
+        return false;
+    }
+
     // ---------------------------------------------------------------- inner reader
 
     public static class LineRecordReader extends RecordReader<LongWritable, Text> {

@@ -69,9 +69,11 @@ public class Query2TopResources {
             String path  = rec.getResourcePath();
             if (path == null || path.isEmpty()) path = "(empty)";
 
-            // Value: host TAB bytes
-            String val = rec.getHost() + "\t" + rec.getBytesTransferred();
-            ctx.write(new Text(path), new Text(val));
+            int currentBatch = ((lineCount - 1) / batchSize) + 1;
+            String outKey = String.valueOf(currentBatch);
+            // Value: path TAB host TAB bytes
+            String val = path + "\t" + rec.getHost() + "\t" + rec.getBytesTransferred();
+            ctx.write(new Text(outKey), new Text(val));
         }
 
         @Override
@@ -88,37 +90,31 @@ public class Query2TopResources {
     public static class TopResourceReducer
             extends Reducer<Text, Text, Text, Text> {
 
-        // Accumulate ALL paths in memory, then select top-20 in cleanup()
-        // (dataset is ~3 M records with ~50 K distinct paths – fits in heap)
-        private final Map<String, long[]> accumulator = new HashMap<>();
-        // accumulator value: [requestCount, totalBytes]
-        private final Map<String, Set<String>> hostSets = new HashMap<>();
-
         @Override
-        protected void reduce(Text key, Iterable<Text> values, Context ctx) {
-            String path = key.toString();
-            long[] stats = accumulator.computeIfAbsent(path, k -> new long[2]);
-            Set<String> hosts = hostSets.computeIfAbsent(
-                path, k -> new HashSet<>());
+        protected void reduce(Text key, Iterable<Text> values, Context ctx) 
+                throws IOException, InterruptedException {
+            int currentBatch = Integer.parseInt(key.toString());
+            Map<String, long[]> accumulator = new HashMap<>();
+            Map<String, Set<String>> hostSets = new HashMap<>();
 
             for (Text val : values) {
-                String[] parts = val.toString().split("\t", 2);
+                String[] parts = val.toString().split("\t", 3);
+                if (parts.length < 1) continue;
+                String path = parts[0];
+                
+                long[] stats = accumulator.computeIfAbsent(path, k -> new long[2]);
+                Set<String> hosts = hostSets.computeIfAbsent(path, k -> new HashSet<>());
+
                 stats[0]++;                               // request count
-                if (parts.length == 2) {
-                    try { stats[1] += Long.parseLong(parts[1]); }
+                if (parts.length == 3) {
+                    try { stats[1] += Long.parseLong(parts[2]); }
                     catch (NumberFormatException ignored) {}
-                    hosts.add(parts[0]);                  // host
+                    hosts.add(parts[1]);                  // host
                 }
             }
-        }
 
-        @Override
-        protected void cleanup(Context ctx)
-                throws IOException, InterruptedException {
-
-            // Sort by request count descending, take top 20
-            List<Map.Entry<String, long[]>> entries =
-                new ArrayList<>(accumulator.entrySet());
+            // Sort by request count descending, take top 20 for this batch
+            List<Map.Entry<String, long[]>> entries = new ArrayList<>(accumulator.entrySet());
             entries.sort((a, b) -> Long.compare(b.getValue()[0], a.getValue()[0]));
 
             int limit = Math.min(20, entries.size());
@@ -126,9 +122,10 @@ public class Query2TopResources {
                 String path   = entries.get(i).getKey();
                 long[] stats  = entries.get(i).getValue();
                 int    dHosts = hostSets.getOrDefault(path, Collections.emptySet()).size();
-                // Output: request_count TAB total_bytes TAB distinct_host_count
-                String out = stats[0] + "\t" + stats[1] + "\t" + dHosts;
-                ctx.write(new Text(path), new Text(out));
+                
+                String outKey = currentBatch + "\t" + path;
+                String outVal = stats[0] + "\t" + stats[1] + "\t" + dHosts;
+                ctx.write(new Text(outKey), new Text(outVal));
             }
         }
     }
