@@ -5,7 +5,7 @@ import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.nasa.etl.common.LogRecord;
-import com.nasa.etl.mongodb.MongoLogRecord;
+import com.nasa.etl.mongodb.MongoLogBatch;
 import org.bson.Document;
 
 import java.io.BufferedReader;
@@ -14,7 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 
 public class MongoLoader {
@@ -105,7 +104,7 @@ public class MongoLoader {
                                  MongoCollection<Document> collection,
                                  int batchSize) throws IOException {
         LoadStats stats = new LoadStats();
-        List<Document> batch = new ArrayList<>(batchSize);
+        MongoLogBatch batch = new MongoLogBatch(batchSize);
 
         if (Files.isDirectory(inputPath)) {
             try (java.util.stream.Stream<Path> paths = Files.list(inputPath)) {
@@ -119,22 +118,20 @@ public class MongoLoader {
             readFile(inputPath, collection, batch, batchSize, stats);
         }
 
-        flush(collection, batch, stats);
+        flush(collection, batch.flush(), stats);
         return stats;
     }
 
     private static void readFile(Path inputFile,
                                  MongoCollection<Document> collection,
-                                 List<Document> batch,
+                                 MongoLogBatch batch,
                                  int batchSize,
                                  LoadStats stats) throws IOException {
-        try (BufferedReader reader = Files.newBufferedReader(inputFile, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(inputFile, StandardCharsets.ISO_8859_1)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 stats.totalLines++;
                 LogRecord record = LogRecord.parse(line);
-
-                int batchId = (int) ((stats.totalLines - 1) / batchSize) + 1;
 
                 if (record.isMalformed()) {
                     stats.malformedRecords++;
@@ -142,11 +139,7 @@ public class MongoLoader {
                     stats.validRecords++;
                 }
 
-                batch.add(MongoLogRecord.toDocument(record, batchId));
-
-                if (batch.size() == batchSize) {
-                    flush(collection, batch, stats);
-                }
+                flush(collection, batch.add(record), stats);
             }
         }
     }
