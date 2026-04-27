@@ -1,0 +1,21 @@
+# Compressed files
+*.gz
+
+# Build artifacts
+target/
+*.class
+*.jar
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Maven
+.m2/
+
+# Logs
+*.log
