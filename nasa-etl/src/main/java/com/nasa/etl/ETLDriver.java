@@ -1,9 +1,9 @@
 package com.nasa.etl;
 
-import com.nasa.etl.common.BatchedLineInputFormat;
-import com.nasa.etl.common.ETLCounters;
 import com.nasa.etl.common.RunMetadata;
 import com.nasa.etl.loader.DBLoader;
+import com.nasa.etl.mapreduce.BatchedLineInputFormat;
+import com.nasa.etl.mapreduce.ETLCounters;
 import com.nasa.etl.mapreduce.Query1DailyTraffic;
 import com.nasa.etl.mapreduce.Query2TopResources;
 import com.nasa.etl.mapreduce.Query3HourlyError;

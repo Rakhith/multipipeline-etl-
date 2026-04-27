@@ -1,4 +1,4 @@
-package com.nasa.etl.common;
+package com.nasa.etl.mapreduce;
 
 /**
  * Shared Hadoop counter group for the NASA ETL pipeline.

@@ -1,7 +1,5 @@
 package com.nasa.etl.mapreduce;
 
-import com.nasa.etl.common.BatchedLineInputFormat;
-import com.nasa.etl.common.ETLCounters;
 import com.nasa.etl.common.LogRecord;
 
 import org.apache.hadoop.conf.Configuration;

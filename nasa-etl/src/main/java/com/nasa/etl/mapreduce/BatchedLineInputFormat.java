@@ -1,4 +1,4 @@
-package com.nasa.etl.common;
+package com.nasa.etl.mapreduce;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
