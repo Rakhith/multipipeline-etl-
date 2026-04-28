@@ -20,9 +20,8 @@ import java.util.List;
  * MongoLoader – reads raw NASA HTTP log files and inserts parsed records into
  * a MongoDB collection in configurable batches.
  *
- * Both valid AND malformed records are stored; the {@code malformed} flag lets
- * the query pipeline skip them while still allowing the driver to count and
- * report malformed records accurately.
+ * Both valid AND malformed records are stored; the malformed flag lets the query pipeline skip them while 
+ * still allowing the driver to count and report malformed records accurately.
  *
  * This class is also used as a standalone ingestion tool:
  *
@@ -50,10 +49,8 @@ public class MongoLoader {
 
     public static final int DEFAULT_BATCH_SIZE = 10_000;
 
-    // ---------------------------------------------------------------- stats bean
-
     public static class LoadStats {
-        public long totalLines;
+        public long totalLines; //useful fields for metadata analysis
         public long validRecords;
         public long malformedRecords;
         public long batchesInserted;
@@ -64,7 +61,6 @@ public class MongoLoader {
         public long getBatchesInserted()  { return batchesInserted; }
     }
 
-    // ---------------------------------------------------------------- standalone
 
     public static void main(String[] args) throws Exception {
 
@@ -75,6 +71,7 @@ public class MongoLoader {
         int    batchSize     = DEFAULT_BATCH_SIZE;
         boolean dropCollection = false;
 
+        //parsing through input arguments
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--input":      inputPath      = args[++i]; break;
@@ -96,11 +93,13 @@ public class MongoLoader {
             MongoDatabase db = client.getDatabase(databaseName);
             MongoCollection<Document> collection = db.getCollection(collectionName);
 
+            // if --drop was passed, deletes the existing collection and gets a fresh handle
             if (dropCollection) {
                 collection.drop();
                 collection = db.getCollection(collectionName);
             }
 
+            //executes the ingestion process and keeps time of execution time
             long      startMs = System.currentTimeMillis();
             LoadStats stats   = load(Paths.get(inputPath), collection, batchSize);
             long      runtimeMs = System.currentTimeMillis() - startMs;
@@ -122,12 +121,9 @@ public class MongoLoader {
         }
     }
 
-    // ---------------------------------------------------------------- API
 
     /**
-     * Load all log files from {@code inputPath} (file or directory) into
-     * {@code collection} using the given {@code batchSize}.
-     *
+     * Load all log files from inputPath(file or directory) into collection using the given batchSize
      * @return accumulated load statistics
      */
     public static LoadStats load(Path inputPath,
@@ -136,11 +132,13 @@ public class MongoLoader {
         LoadStats     stats   = new LoadStats();
         MongoLogBatch batcher = new MongoLogBatch(batchSize);
 
+        // checking if input is a directory or a file and then iterating over all of them
         if (Files.isDirectory(inputPath)) {
             try (java.util.stream.Stream<Path> paths = Files.list(inputPath)) {
                 for (Path file : (Iterable<Path>) paths
                         .filter(Files::isRegularFile)
                         .sorted()::iterator) {
+                            // batcher is shared so need of a flushing partial batches everytime
                     readFile(file, collection, batcher, stats);
                 }
             }
@@ -153,14 +151,11 @@ public class MongoLoader {
         return stats;
     }
 
-    // ---------------------------------------------------------------- internals
-
     private static void readFile(Path file,
                                  MongoCollection<Document> collection,
                                  MongoLogBatch batcher,
                                  LoadStats stats) throws IOException {
 
-        // NASA logs are ISO-8859-1 (Latin-1); do not use UTF-8 here.
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.ISO_8859_1)) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -175,19 +170,13 @@ public class MongoLoader {
 
                 // add() returns a non-empty snapshot when the batch is full.
                 List<Document> ready = batcher.add(record);
+                // ready is non-empty only when batch size is filled
                 insertBatch(collection, ready, stats);
             }
         }
     }
 
-    /**
-     * Insert a batch into MongoDB if it is non-empty.
-     *
-     * FIX: The original called {@code batch.clear()} on the returned snapshot,
-     * which had no effect because the internal buffer was already cleared inside
-     * {@code MongoLogBatch.drainBuffer()}. The snapshot is now treated as
-     * read-only by this method.
-     */
+    //Insert a batch into MongoDB if it is non-empty
     private static void insertBatch(MongoCollection<Document> collection,
                                     List<Document> batch,
                                     LoadStats stats) {
@@ -196,8 +185,7 @@ public class MongoLoader {
         stats.batchesInserted++;
     }
 
-    // ---------------------------------------------------------------- usage
-
+    // prints the correct command syntax, so the user knows how to run the program correctly
     private static void printUsage() {
         System.err.println(
             "Usage: java -cp nasa-etl.jar com.nasa.etl.loader.MongoLoader \\\n" +
