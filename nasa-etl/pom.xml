@@ -32,7 +32,7 @@
         that must include Hadoop itself (e.g., for local testing without
         a Hadoop installation).
       -->
-      <scope>provided</scope>
+      <scope>compile</scope>
     </dependency>
 
     <dependency>
