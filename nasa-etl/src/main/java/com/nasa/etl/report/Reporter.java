@@ -58,7 +58,6 @@ public class Reporter {
             printQuery3(conn, runId);
         }
     }
-
     // ----------------------------------------------------------------- banner
 
     private static void printBanner(int runId) {

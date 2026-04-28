@@ -335,4 +335,107 @@ public class DBLoader {
         conn.setAutoCommit(false);
         return conn;
     }
+    // Mongo Specific Ones
+    public static Connection openConnection(String url, String user, String pass)
+        throws SQLException {
+        Connection conn = DriverManager.getConnection(url, user, pass);
+        conn.setAutoCommit(false);
+        return conn;
+    }
+    public static int loadQuery1(Connection conn,
+                            Iterable<org.bson.Document> docs,
+                            int runId) throws SQLException {
+
+    String sql =
+        "INSERT INTO q1_daily_traffic " +
+        "(run_id, batch_id, log_date, status_code, request_count, total_bytes) " +
+        "VALUES (?, ?, ?, ?, ?, ?)";
+
+    int loaded = 0;
+
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        for (org.bson.Document d : docs) {
+
+            ps.setInt(1, runId);
+            ps.setInt(2, d.getInteger("batchId"));
+            ps.setDate(3, java.sql.Date.valueOf(d.getString("logDate")));
+            ps.setInt(4, d.getInteger("statusCode"));
+            ps.setLong(5, d.get("requestCount", Number.class).longValue());
+            ps.setLong(6, d.get("totalBytes", Number.class).longValue());
+
+            ps.addBatch();
+            loaded++;
+        }
+        ps.executeBatch();
+        conn.commit();
+    }
+
+    System.out.println("[DBLoader] Q1 rows loaded: " + loaded);
+    return loaded;
+}
+public static int loadQuery2(Connection conn,
+                            Iterable<org.bson.Document> docs,
+                            int runId) throws SQLException {
+
+    String sql =
+        "INSERT INTO q2_top_resources " +
+        "(run_id, batch_id, resource_path, request_count, total_bytes, distinct_host_count) " +
+        "VALUES (?, ?, ?, ?, ?, ?)";
+
+    int loaded = 0;
+
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        for (org.bson.Document d : docs) {
+
+            ps.setInt(1, runId);
+            ps.setInt(2, d.getInteger("batchId"));
+            ps.setString(3, d.getString("resourcePath"));
+            ps.setLong(4, d.get("requestCount", Number.class).longValue());
+            ps.setLong(5, d.get("totalBytes", Number.class).longValue());
+            ps.setLong(6, d.get("distinctHostCount", Number.class).longValue());
+
+            ps.addBatch();
+            loaded++;
+        }
+        ps.executeBatch();
+        conn.commit();
+    }
+
+    System.out.println("[DBLoader] Q2 rows loaded: " + loaded);
+    return loaded;
+}
+public static int loadQuery3(Connection conn,
+                            Iterable<org.bson.Document> docs,
+                            int runId) throws SQLException {
+
+    String sql =
+        "INSERT INTO q3_hourly_error " +
+        "(run_id, batch_id, log_date, log_hour, error_request_count, " +
+        " total_request_count, error_rate, distinct_error_hosts) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
+    int loaded = 0;
+
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        for (org.bson.Document d : docs) {
+
+            ps.setInt(1, runId);
+            ps.setInt(2, d.getInteger("batchId"));
+            ps.setDate(3, java.sql.Date.valueOf(d.getString("logDate")));
+            ps.setInt(4, d.getInteger("logHour"));
+            ps.setLong(5, d.get("errorRequestCount", Number.class).longValue());
+            ps.setLong(6, d.get("totalRequestCount", Number.class).longValue());
+            ps.setDouble(7, d.get("errorRate", Number.class).doubleValue());
+            ps.setLong(8, d.get("distinctErrorHosts", Number.class).longValue());
+
+            ps.addBatch();
+            loaded++;
+        }
+        ps.executeBatch();
+        conn.commit();
+    }
+
+    System.out.println("[DBLoader] Q3 rows loaded: " + loaded);
+    return loaded;
+}
 }
