@@ -18,11 +18,17 @@ import java.io.IOException;
  * Query 1 – Daily Traffic Summary
  *
  * For each (log_date, status_code) pair, compute:
- *   request_count   – total HTTP requests
- *   total_bytes     – sum of bytes transferred
+ *   request_count  – total HTTP requests
+ *   total_bytes    – sum of bytes transferred
  *
  * Output key  : "batch_id\tlog_date\tstatus_code"
  * Output value: "request_count\ttotal_bytes"
+ *
+ * FIX: removed the batchOffset calculation that was always 0 because
+ * isSplitable=false means there is only ever one mapper task (taskId=0).
+ * The batch_id is now simply derived from lineCount and batchSize, which
+ * is what was actually happening before — just without the misleading
+ * dead code.
  */
 public class Query1DailyTraffic {
 
@@ -32,14 +38,12 @@ public class Query1DailyTraffic {
     public static class DailyTrafficMapper
             extends Mapper<LongWritable, Text, Text, Text> {
 
-        private int  batchSize;
-        private int  lineCount = 0;
-        private int  batchOffset = 0;
+        private int batchSize;
+        private int lineCount = 0;
 
         @Override
         protected void setup(Context ctx) {
             batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
-            batchOffset = ctx.getTaskAttemptID().getTaskID().getId() * 1_000_000;
         }
 
         @Override
@@ -49,7 +53,10 @@ public class Query1DailyTraffic {
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
             lineCount++;
 
-            int batchId = batchOffset + ((lineCount - 1) / batchSize) + 1;
+            // Batch ID: 1-based, increments every batchSize lines
+            int batchId = ((lineCount - 1) / batchSize) + 1;
+
+            // Count completed batches
             if (lineCount % batchSize == 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }
@@ -63,9 +70,8 @@ public class Query1DailyTraffic {
 
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
 
-            int currentBatch = ((lineCount - 1) / batchSize) + 1;
             // Key: batchId TAB date TAB status_code
-            String outKey   = currentBatch + "\t" + rec.getLogDate() + "\t" + rec.getStatusCode();
+            String outKey   = batchId + "\t" + rec.getLogDate() + "\t" + rec.getStatusCode();
             // Value: 1 TAB bytes
             String outValue = "1\t" + rec.getBytesTransferred();
 
@@ -75,8 +81,8 @@ public class Query1DailyTraffic {
         @Override
         protected void cleanup(Context ctx)
                 throws IOException, InterruptedException {
-            // Flush final partial batch
-            if (lineCount % batchSize != 0 && lineCount > 0) {
+            // Count the final partial batch (if any lines remain)
+            if (lineCount > 0 && lineCount % batchSize != 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }
         }
@@ -113,8 +119,8 @@ public class Query1DailyTraffic {
     /**
      * Creates and configures (but does not submit) the Query 1 Job.
      *
-     * @param conf     shared Hadoop configuration
-     * @param inputDir HDFS path(s) to raw log files
+     * @param conf      shared Hadoop configuration
+     * @param inputDir  HDFS path(s) to raw log files
      * @param outputDir HDFS output directory (must not exist)
      */
     public static Job buildJob(Configuration conf, String inputDir, String outputDir)
@@ -123,16 +129,13 @@ public class Query1DailyTraffic {
         Job job = Job.getInstance(conf, "NASA-ETL-Q1-DailyTrafficSummary");
         job.setJarByClass(Query1DailyTraffic.class);
 
-        // Input / Output
         job.setInputFormatClass(BatchedLineInputFormat.class);
         FileInputFormat.addInputPath(job, new Path(inputDir));
         FileOutputFormat.setOutputPath(job, new Path(outputDir));
 
-        // Mapper / Reducer classes
         job.setMapperClass(DailyTrafficMapper.class);
         job.setReducerClass(DailyTrafficReducer.class);
 
-        // Output types
         job.setMapOutputKeyClass(Text.class);
         job.setMapOutputValueClass(Text.class);
         job.setOutputKeyClass(Text.class);

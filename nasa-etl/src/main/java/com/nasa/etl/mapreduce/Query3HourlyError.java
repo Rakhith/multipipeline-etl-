@@ -19,17 +19,20 @@ import java.util.Set;
 /**
  * Query 3 – Hourly Error Analysis
  *
- * For each (log_date, log_hour) pair, compute:
+ * For each (batch_id, log_date, log_hour) group, compute:
  *   error_request_count  – requests with status 400–599
  *   total_request_count  – all requests in that hour
  *   error_rate           – error_request_count / total_request_count
  *   distinct_error_hosts – unique hosts that produced ≥1 error in that hour
  *
- * Map output key  : "batch_id\tlog_date\tlog_hour"
- * Map output value: "is_error(0|1)\thost"
+ * Map key  : "batch_id\tlog_date\tlog_hour"
+ * Map value: "is_error(0|1)\thost"
  *
- * Reduce output key  : "batch_id\tlog_date\tlog_hour"
- * Reduce output value: "error_req\ttotal_req\terror_rate\tdistinct_error_hosts"
+ * Reduce key  : "batch_id\tlog_date\tlog_hour"
+ * Reduce value: "error_req\ttotal_req\terror_rate\tdistinct_error_hosts"
+ *
+ * FIX: removed the batchOffset calculation that was always 0 because
+ * isSplitable=false means there is only ever one mapper task (taskId=0).
  */
 public class Query3HourlyError {
 
@@ -41,12 +44,10 @@ public class Query3HourlyError {
 
         private int batchSize;
         private int lineCount = 0;
-        private int batchOffset = 0;
 
         @Override
         protected void setup(Context ctx) {
             batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
-            batchOffset = ctx.getTaskAttemptID().getTaskID().getId() * 1_000_000;
         }
 
         @Override
@@ -55,7 +56,9 @@ public class Query3HourlyError {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
             lineCount++;
-            int batchId = batchOffset + ((lineCount - 1) / batchSize) + 1;
+
+            int batchId = ((lineCount - 1) / batchSize) + 1;
+
             if (lineCount % batchSize == 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }
@@ -67,10 +70,9 @@ public class Query3HourlyError {
             }
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
 
-            int currentBatch = ((lineCount - 1) / batchSize) + 1;
-            String key = currentBatch + "\t" + rec.getLogDate() + "\t" + rec.getLogHour();
+            String key = batchId + "\t" + rec.getLogDate() + "\t" + rec.getLogHour();
 
-            // is_error flag  (1 = error, 0 = not error)
+            // is_error flag: 1 = error (4xx/5xx), 0 = not
             int status  = rec.getStatusCode();
             int isError = (status >= 400 && status <= 599) ? 1 : 0;
 
@@ -81,7 +83,7 @@ public class Query3HourlyError {
 
         @Override
         protected void cleanup(Context ctx) throws IOException, InterruptedException {
-            if (lineCount % batchSize != 0 && lineCount > 0) {
+            if (lineCount > 0 && lineCount % batchSize != 0) {
                 ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
             }
         }
@@ -116,7 +118,6 @@ public class Query3HourlyError {
             double errorRate = totalRequests > 0
                                ? (double) errorRequests / totalRequests : 0.0;
 
-            // Output: error_req TAB total_req TAB error_rate TAB distinct_error_hosts
             String out = errorRequests + "\t" + totalRequests
                        + "\t" + String.format("%.6f", errorRate)
                        + "\t" + errorHosts.size();
