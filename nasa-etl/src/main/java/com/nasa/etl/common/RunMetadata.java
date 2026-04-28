@@ -4,10 +4,7 @@ package com.nasa.etl.common;
  * Run-level execution metadata shared by all pipelines.
  * Mirrors the run_metadata table in scripts/schema.sql.
  *
- * FIX: addQueryStats previously only updated totalRecords / malformedCount /
- * totalBatches / avgBatchSize from Q1.  If the ETL driver called it for Q2 or
- * Q3 first (or if Q1 was skipped) those fields stayed at 0.  Now whichever
- * query is called first with a non-zero record count wins those fields, and
+ * whichever query is called first with a non-zero record count wins the fields, and
  * subsequent calls for the same query number are idempotent for the shared
  * fields.  Each query still owns its own runtime slot.
  */
@@ -50,9 +47,7 @@ public class RunMetadata {
                               long records, long malformed, long batches) {
 
         // Shared fields (totalRecords, malformedCount, totalBatches, avgBatchSize)
-        // are set by whichever query is called first that carries a non-zero
-        // record count.  All three jobs read the same input so the values should
-        // be identical — we just avoid overwriting with zeros.
+        // are set by whichever query is called first that carries a non-zero record count.
         if (records > 0 && totalRecords == 0) {
             totalRecords   = records;
             malformedCount = malformed;
@@ -71,7 +66,7 @@ public class RunMetadata {
         }
     }
 
-    // ---------------------------------------------------------------- getters
+    // getters
 
     public int    getRunId()           { return runId; }
     public String getPipelineName()    { return pipelineName; }
@@ -85,7 +80,7 @@ public class RunMetadata {
     public long   getQ3RuntimeMs()     { return q3RuntimeMs; }
     public long   getRuntimeMs()       { return runtimeMs; }
 
-    // ---------------------------------------------------------------- setters
+    // setters
 
     public void setRunId(int runId)                     { this.runId = runId; }
     public void setPipelineName(String pipelineName)    { this.pipelineName = pipelineName; }
