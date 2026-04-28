@@ -8,7 +8,7 @@ import org.bson.Document;
  */
 public class MongoLogRecord {
 
-    private MongoLogRecord() {}  // utility class — no instantiation
+    private MongoLogRecord() {}
 
     /**
      * Converts a parsed LogRecord into a MongoDB BSON Document.

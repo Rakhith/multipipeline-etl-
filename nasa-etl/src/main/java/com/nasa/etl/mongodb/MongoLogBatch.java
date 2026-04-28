@@ -27,18 +27,12 @@ import java.util.List;
  *   if (!tail.isEmpty()) collection.insertMany(tail);
  * </pre>
  *
- * Fix vs. original:
- *   The original called {@code batch.clear()} on the already-drained list that
- *   was returned to the caller, which was a no-op. The logic is now correct:
- *   {@code drainBatch()} snapshots the internal list, clears the internal state,
- *   increments the batch counter, and returns the snapshot. The caller receives
- *   an immutable view and must not modify it.
  */
 public class MongoLogBatch {
 
     private final int           batchSize;
     private final List<Document> buffer;
-    private int batchId = 1;
+    private int batchId = 1; //first batchID
 
     /** Tracks how many complete batches have been emitted (excludes the tail flush). */
     private int completedBatches = 0;
@@ -54,7 +48,7 @@ public class MongoLogBatch {
     /**
      * Add a record to the current batch.
      *
-     * @return a non-empty list of documents ready for {@code insertMany} if the
+     * @return a non-empty list of documents ready for insertMany operation if the
      *         batch is now full; {@link Collections#emptyList()} otherwise.
      */
     public List<Document> add(LogRecord record) {
@@ -63,7 +57,7 @@ public class MongoLogBatch {
             completedBatches++;
             return drainBuffer();
         }
-        return Collections.emptyList();
+        return Collections.emptyList(); // signals there is nothing to return - batching incomplete 
     }
 
     /**
@@ -78,15 +72,11 @@ public class MongoLogBatch {
         return drainBuffer();
     }
 
-    // ----------------------------------------------------------------- accessors
 
-    /** The batch ID that will be assigned to the next document inserted. */
     public int getCurrentBatchId() { return batchId; }
 
-    /** Number of full batches emitted so far (does not count the tail flush). */
     public int getCompletedBatches() { return completedBatches; }
 
-    // ----------------------------------------------------------------- internals
 
     private List<Document> drainBuffer() {
         List<Document> snapshot = new ArrayList<>(buffer);
