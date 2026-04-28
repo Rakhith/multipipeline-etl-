@@ -52,6 +52,7 @@ public class Reporter {
 
             printBanner(runId);
             printRunMetadata(conn, runId);
+            printBatchMetadata(conn, runId);
             printQuery1(conn, runId);
             printQuery2(conn, runId);
             printQuery3(conn, runId);
@@ -109,6 +110,34 @@ public class Reporter {
             }
         }
         System.out.println("  " + "-".repeat(88));
+    }
+
+    private static void printBatchMetadata(Connection conn, int runId)
+            throws SQLException {
+        System.out.println("\n  BATCH METADATA");
+        System.out.printf("  %-8s %-8s %-10s %14s %18s%n",
+            "batch_id", "query", "records", "batch_runtime_ms", "loaded_at");
+        System.out.println("  " + "-".repeat(70));
+    
+        String sql =
+            "SELECT batch_id, query_name, record_count, batch_runtime_ms, loaded_at " +
+            "FROM batch_metadata WHERE run_id = ? " +
+            "ORDER BY query_name, batch_id";
+    
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    System.out.printf("  %-8d %-8s %14d %18d %-25s%n",
+                        rs.getInt("batch_id"),
+                        rs.getString("query_name"),
+                        rs.getLong("record_count"),
+                        rs.getLong("batch_runtime_ms"),
+                        rs.getTimestamp("loaded_at"));
+                }
+            }
+        }
+        System.out.println("  " + "-".repeat(70));
     }
 
     // ----------------------------------------------------------------- Q1
