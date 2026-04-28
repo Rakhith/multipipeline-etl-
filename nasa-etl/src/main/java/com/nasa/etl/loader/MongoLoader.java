@@ -35,15 +35,6 @@ import java.util.List;
  *     [--drop]
  * </pre>
  *
- * Bug fixes vs. the original version:
- *   1. {@code batch.clear()} was called on the snapshot list returned by
- *      {@code MongoLogBatch.add()}, which was a no-op (the internal buffer had
- *      already been cleared inside {@code drainBuffer()}). The flush helper now
- *      simply calls {@code insertMany} on the non-empty snapshot.
- *   2. {@code stats.batchesInserted} was incremented inside {@code flush()} even
- *      when the list was empty, causing an off-by-one. The guard
- *      {@code if (batch.isEmpty()) return} prevents that.
- *   3. ISO-8859-1 charset is preserved (the NASA logs use it).
  */
 public class MongoLoader {
 
