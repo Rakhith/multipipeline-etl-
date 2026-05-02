@@ -11,7 +11,5 @@ public enum ETLCounters {
     /** Lines that could not be parsed into a valid LogRecord. */
     MALFORMED_RECORDS,
     /** Lines successfully parsed. */
-    VALID_RECORDS,
-    /** Number of mapper batches dispatched (one per batch flush). */
-    BATCHES_PROCESSED
+    VALID_RECORDS
 }

@@ -24,11 +24,7 @@ import java.io.IOException;
  * Output key  : "batch_id\tlog_date\tstatus_code"
  * Output value: "request_count\ttotal_bytes"
  *
- * FIX: removed the batchOffset calculation that was always 0 because
- * isSplitable=false means there is only ever one mapper task (taskId=0).
- * The batch_id is now simply derived from lineCount and batchSize, which
- * is what was actually happening before — just without the misleading
- * dead code.
+ * batch_id is week-based (YYYYWW), derived from each record's log_date.
  */
 public class Query1DailyTraffic {
 
@@ -38,28 +34,11 @@ public class Query1DailyTraffic {
     public static class DailyTrafficMapper
             extends Mapper<LongWritable, Text, Text, Text> {
 
-        private int batchSize;
-        private int lineCount = 0;
-
-        @Override
-        protected void setup(Context ctx) {
-            batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
-        }
-
         @Override
         protected void map(LongWritable offset, Text line, Context ctx)
                 throws IOException, InterruptedException {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
-            lineCount++;
-
-            // Batch ID: 1-based, increments every batchSize lines
-            int batchId = ((lineCount - 1) / batchSize) + 1;
-
-            // Count completed batches
-            if (lineCount % batchSize == 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
 
             LogRecord rec = LogRecord.parse(line.toString());
 
@@ -69,6 +48,7 @@ public class Query1DailyTraffic {
             }
 
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
+            int batchId = WeekBatching.batchIdForIsoDate(rec.getLogDate());
 
             // Key: batchId TAB date TAB status_code
             String outKey   = batchId + "\t" + rec.getLogDate() + "\t" + rec.getStatusCode();
@@ -76,15 +56,6 @@ public class Query1DailyTraffic {
             String outValue = "1\t" + rec.getBytesTransferred();
 
             ctx.write(new Text(outKey), new Text(outValue));
-        }
-
-        @Override
-        protected void cleanup(Context ctx)
-                throws IOException, InterruptedException {
-            // Count the final partial batch (if any lines remain)
-            if (lineCount > 0 && lineCount % batchSize != 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
         }
     }
 

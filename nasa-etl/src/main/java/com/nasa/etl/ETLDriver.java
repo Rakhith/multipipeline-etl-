@@ -18,6 +18,10 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 
 /**
  * ETLDriver – Main entry point for the NASA HTTP Log ETL Framework.
@@ -114,6 +118,7 @@ public class ETLDriver extends Configured implements Tool {
         // ======== START RUNTIME CLOCK ========
         long globalStart = System.currentTimeMillis();
         RunMetadata metadata = new RunMetadata(runId, pipelineName, batchSize);
+        Map<Integer, Long> batchRecordCounts = null;
 
         // ---- Q1 ----
         String q1Out = outputBase + "/q1";
@@ -126,7 +131,8 @@ public class ETLDriver extends Configured implements Tool {
 
         Counters q1c = q1Job.getCounters();
         DBLoader.loadQuery1(conn, conf, q1Out, runId);
-        saveBatchMetadata(conn, metadata, runId, 1, "Q1", q1Start, q1End, q1c);
+        batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
+        saveQ1Metadata(conn, metadata, runId, "Q1", q1Start, q1End, q1c, batchRecordCounts);
 
         // ---- Q2 ----
         String q2Out = outputBase + "/q2";
@@ -139,7 +145,7 @@ public class ETLDriver extends Configured implements Tool {
 
         Counters q2c = q2Job.getCounters();
         DBLoader.loadQuery2(conn, conf, q2Out, runId);
-        saveBatchMetadata(conn, metadata, runId, 2, "Q2", q2Start, q2End, q2c);
+        saveQueryBatchMetadata(conn, metadata, runId, "Q2", q2Start, q2End, q2c, batchRecordCounts);
 
         // ---- Q3 ----
         String q3Out = outputBase + "/q3";
@@ -152,7 +158,7 @@ public class ETLDriver extends Configured implements Tool {
 
         Counters q3c = q3Job.getCounters();
         DBLoader.loadQuery3(conn, conf, q3Out, runId);
-        saveBatchMetadata(conn, metadata, runId, 3, "Q3", q3Start, q3End, q3c);
+        saveQueryBatchMetadata(conn, metadata, runId, "Q3", q3Start, q3End, q3c, batchRecordCounts);
 
         // ======== STOP RUNTIME CLOCK ========
         long globalEnd   = System.currentTimeMillis();
@@ -179,41 +185,105 @@ public class ETLDriver extends Configured implements Tool {
 
     // ----------------------------------------------------------------- helpers
 
-    private static void saveBatchMetadata(Connection conn, RunMetadata metadata,
-                                          int runId, int queryNumber,
-                                          String queryName,
-                                          long startMs, long endMs,
-                                          Counters counters) throws Exception {
+    private static void saveQ1Metadata(Connection conn, RunMetadata metadata,
+                                       int runId, String queryName,
+                                       long startMs, long endMs,
+                                       Counters counters,
+                                       Map<Integer, Long> batchRecordCounts) throws Exception {
         long valid     = counters.findCounter(ETLCounters.VALID_RECORDS)    .getValue();
         long malformed = counters.findCounter(ETLCounters.MALFORMED_RECORDS).getValue();
-        long batches   = counters.findCounter(ETLCounters.BATCHES_PROCESSED).getValue();
         long runtimeMs = endMs - startMs;
 
-        metadata.addQueryStats(queryNumber, runtimeMs, valid, malformed, batches);
-        saveLogicalBatchRows(conn, runId, queryName, valid, runtimeMs, batches);
+        metadata.setQ1RuntimeMs(runtimeMs);
+        metadata.setTotalRecords(valid);
+        metadata.setMalformedCount(malformed);
+        metadata.setTotalBatches(batchRecordCounts.size());
+        metadata.setAvgBatchSize(batchRecordCounts.isEmpty()
+                                 ? 0.0 : (double) valid / batchRecordCounts.size());
+
+        saveBatchRowsFromCounts(conn, runId, queryName, runtimeMs, batchRecordCounts);
 
         System.out.printf("[%s] runtime=%,d ms | valid=%,d | malformed=%,d "
                           + "| batches=%,d | avg_batch=%.1f%n",
                           queryName, runtimeMs, valid, malformed,
-                          batches, metadata.getAvgBatchSize());
+                          metadata.getTotalBatches(), metadata.getAvgBatchSize());
     }
 
-    private static void saveLogicalBatchRows(Connection conn, int runId,
-                                             String queryName, long records,
-                                             long runtimeMs, long batches)
+    private static void saveQueryBatchMetadata(Connection conn, RunMetadata metadata,
+                                               int runId, String queryName,
+                                               long startMs, long endMs,
+                                               Counters counters,
+                                               Map<Integer, Long> batchRecordCounts)
             throws Exception {
-        long safeBatches = Math.max(1, batches);
-        long baseRecords = records / safeBatches;
-        long extraRecords = records % safeBatches;
-        long baseRuntime = runtimeMs / safeBatches;
-        long extraRuntime = runtimeMs % safeBatches;
+        long valid = counters.findCounter(ETLCounters.VALID_RECORDS).getValue();
+        long malformed = counters.findCounter(ETLCounters.MALFORMED_RECORDS).getValue();
+        long runtimeMs = endMs - startMs;
 
-        for (int i = 1; i <= safeBatches; i++) {
-            long batchRecords = baseRecords + (i <= extraRecords ? 1 : 0);
-            long batchRuntime = baseRuntime + (i <= extraRuntime ? 1 : 0);
-            DBLoader.saveBatchMetadata(conn, runId, i, queryName,
-                                       batchRecords, batchRuntime);
+        if ("Q2".equals(queryName)) metadata.setQ2RuntimeMs(runtimeMs);
+        if ("Q3".equals(queryName)) metadata.setQ3RuntimeMs(runtimeMs);
+
+        saveBatchRowsFromCounts(conn, runId, queryName, runtimeMs, batchRecordCounts);
+
+        System.out.printf("[%s] runtime=%,d ms | valid=%,d | malformed=%,d "
+                          + "| batches=%,d | avg_batch=%.1f%n",
+                          queryName, runtimeMs, valid, malformed,
+                          metadata.getTotalBatches(), metadata.getAvgBatchSize());
+    }
+
+    private static void saveBatchRowsFromCounts(Connection conn, int runId,
+                                                String queryName, long runtimeMs,
+                                                Map<Integer, Long> batchRecordCounts)
+            throws Exception {
+        if (batchRecordCounts == null || batchRecordCounts.isEmpty()) {
+            DBLoader.saveBatchMetadata(conn, runId, 1, queryName, 0L, runtimeMs);
+            return;
         }
+
+        long totalRecords = 0;
+        for (long count : batchRecordCounts.values()) totalRecords += count;
+
+        List<BatchRuntimeSlice> slices = new ArrayList<>();
+        long assigned = 0;
+
+        for (Map.Entry<Integer, Long> entry : batchRecordCounts.entrySet()) {
+            int batchId = entry.getKey();
+            long records = entry.getValue();
+            double exact = totalRecords > 0
+                           ? ((double) runtimeMs * records) / totalRecords
+                           : 0.0;
+            long base = (long) Math.floor(exact);
+            assigned += base;
+            slices.add(new BatchRuntimeSlice(batchId, records, base, exact - base));
+        }
+
+        long remaining = runtimeMs - assigned;
+        slices.sort(Comparator.comparingDouble(BatchRuntimeSlice::fractionalRemainder).reversed());
+        for (int i = 0; i < slices.size() && remaining > 0; i++, remaining--) {
+            slices.get(i).runtimeMs++;
+        }
+        slices.sort(Comparator.comparingInt(BatchRuntimeSlice::batchId));
+
+        for (BatchRuntimeSlice slice : slices) {
+            DBLoader.saveBatchMetadata(conn, runId, slice.batchId, queryName,
+                                       slice.records, slice.runtimeMs);
+        }
+    }
+
+    private static class BatchRuntimeSlice {
+        final int batchId;
+        final long records;
+        long runtimeMs;
+        final double fractional;
+
+        BatchRuntimeSlice(int batchId, long records, long runtimeMs, double fractional) {
+            this.batchId = batchId;
+            this.records = records;
+            this.runtimeMs = runtimeMs;
+            this.fractional = fractional;
+        }
+
+        int batchId() { return batchId; }
+        double fractionalRemainder() { return fractional; }
     }
 
     private static void deleteIfExists(Configuration conf, String path)

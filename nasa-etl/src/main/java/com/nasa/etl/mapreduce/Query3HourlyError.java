@@ -31,8 +31,7 @@ import java.util.Set;
  * Reduce key  : "batch_id\tlog_date\tlog_hour"
  * Reduce value: "error_req\ttotal_req\terror_rate\tdistinct_error_hosts"
  *
- * FIX: removed the batchOffset calculation that was always 0 because
- * isSplitable=false means there is only ever one mapper task (taskId=0).
+ * batch_id is week-based (YYYYWW), derived from each record's log_date.
  */
 public class Query3HourlyError {
 
@@ -42,26 +41,11 @@ public class Query3HourlyError {
     public static class HourlyErrorMapper
             extends Mapper<LongWritable, Text, Text, Text> {
 
-        private int batchSize;
-        private int lineCount = 0;
-
-        @Override
-        protected void setup(Context ctx) {
-            batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
-        }
-
         @Override
         protected void map(LongWritable offset, Text line, Context ctx)
                 throws IOException, InterruptedException {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
-            lineCount++;
-
-            int batchId = ((lineCount - 1) / batchSize) + 1;
-
-            if (lineCount % batchSize == 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
 
             LogRecord rec = LogRecord.parse(line.toString());
             if (rec.isMalformed()) {
@@ -69,6 +53,7 @@ public class Query3HourlyError {
                 return;
             }
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
+            int batchId = WeekBatching.batchIdForIsoDate(rec.getLogDate());
 
             String key = batchId + "\t" + rec.getLogDate() + "\t" + rec.getLogHour();
 
@@ -79,13 +64,6 @@ public class Query3HourlyError {
             // Value: isError TAB host
             String val = isError + "\t" + rec.getHost();
             ctx.write(new Text(key), new Text(val));
-        }
-
-        @Override
-        protected void cleanup(Context ctx) throws IOException, InterruptedException {
-            if (lineCount > 0 && lineCount % batchSize != 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
         }
     }
 

@@ -17,20 +17,17 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Custom InputFormat that honours the configured batch size.
+ * Custom InputFormat that reads one raw log line per record.
  *
  * Configuration key: nasa.etl.batch.size   (default 10 000)
  *
  * Each RecordReader key = global line offset (LongWritable).
  * Each RecordReader value = exactly one raw log line (Text).
  *
- * The "batching" visible to Hadoop is enforced via a counter increment
- * every <batchSize> records inside the Mapper; splitting is done
- * using standard NLineInputFormat-style byte-offset splits so that
- * Hadoop can parallelise across nodes naturally.
+ * This class is intentionally agnostic to logical batching rules.
+ * Logical batch IDs are computed in mapper code (currently week-based).
  *
- * For single-node / pseudo-distributed testing the default split
- * behaviour (one split per file) is fine.
+ * For single-node / pseudo-distributed testing, one split per file is fine.
  */
 public class BatchedLineInputFormat extends FileInputFormat<LongWritable, Text> {
 

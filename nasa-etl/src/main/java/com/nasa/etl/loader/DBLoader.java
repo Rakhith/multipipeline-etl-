@@ -16,7 +16,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Loads MapReduce outputs into PostgreSQL using scripts/schema.sql as the
@@ -185,6 +187,25 @@ public class DBLoader {
             ps.executeUpdate();
             conn.commit();
         }
+    }
+
+    public static Map<Integer, Long> getQ1BatchRecordCounts(Connection conn, int runId)
+            throws SQLException {
+        String sql =
+            "SELECT batch_id, SUM(request_count) AS record_count " +
+            "FROM q1_daily_traffic WHERE run_id = ? " +
+            "GROUP BY batch_id ORDER BY batch_id";
+
+        Map<Integer, Long> result = new LinkedHashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.put(rs.getInt("batch_id"), rs.getLong("record_count"));
+                }
+            }
+        }
+        return result;
     }
 
     public static void loadQuery1(Connection conn, Configuration conf,

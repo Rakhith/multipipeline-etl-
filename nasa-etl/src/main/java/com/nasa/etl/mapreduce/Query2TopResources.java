@@ -29,8 +29,7 @@ import java.util.*;
  * Reduce key  : "batch_id\tresource_path"
  * Reduce value: "request_count\ttotal_bytes\tdistinct_host_count"
  *
- * FIX: removed the batchOffset calculation that was always 0 because
- * isSplitable=false means there is only ever one mapper task (taskId=0).
+ * batch_id is week-based (YYYYWW), derived from each record's log_date.
  */
 public class Query2TopResources {
 
@@ -40,26 +39,11 @@ public class Query2TopResources {
     public static class TopResourceMapper
             extends Mapper<LongWritable, Text, Text, Text> {
 
-        private int batchSize;
-        private int lineCount = 0;
-
-        @Override
-        protected void setup(Context ctx) {
-            batchSize = BatchedLineInputFormat.getBatchSize(ctx.getConfiguration());
-        }
-
         @Override
         protected void map(LongWritable offset, Text line, Context ctx)
                 throws IOException, InterruptedException {
 
             ctx.getCounter(ETLCounters.TOTAL_LINES_READ).increment(1);
-            lineCount++;
-
-            int batchId = ((lineCount - 1) / batchSize) + 1;
-
-            if (lineCount % batchSize == 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
 
             LogRecord rec = LogRecord.parse(line.toString());
             if (rec.isMalformed()) {
@@ -67,6 +51,7 @@ public class Query2TopResources {
                 return;
             }
             ctx.getCounter(ETLCounters.VALID_RECORDS).increment(1);
+            int batchId = WeekBatching.batchIdForIsoDate(rec.getLogDate());
 
             String path = rec.getResourcePath();
             if (path == null || path.isEmpty()) path = "(empty)";
@@ -75,13 +60,6 @@ public class Query2TopResources {
             // Value: path TAB host TAB bytes
             String val = path + "\t" + rec.getHost() + "\t" + rec.getBytesTransferred();
             ctx.write(new Text(String.valueOf(batchId)), new Text(val));
-        }
-
-        @Override
-        protected void cleanup(Context ctx) throws IOException, InterruptedException {
-            if (lineCount > 0 && lineCount % batchSize != 0) {
-                ctx.getCounter(ETLCounters.BATCHES_PROCESSED).increment(1);
-            }
         }
     }
 
