@@ -9,16 +9,25 @@
   <artifactId>nasa-etl</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
-  <name>NASA HTTP Log ETL – Hadoop MapReduce</name>
+  <name>NASA HTTP Log ETL</name>
 
   <properties>
     <maven.compiler.source>8</maven.compiler.source>
     <maven.compiler.target>8</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <hadoop.version>3.3.6</hadoop.version>
+    <pig.version>0.18.0</pig.version>
   </properties>
 
   <dependencies>
+
+     <!-- ===== Pig runtime (provided – must be on the cluster) ===== -->
+    <dependency>
+      <groupId>org.apache.pig</groupId>
+      <artifactId>pig</artifactId>
+      <version>${pig.version}</version>
+      <scope>provided</scope>
+    </dependency>
 
     <!-- =================== Hadoop =================== -->
     <dependency>
