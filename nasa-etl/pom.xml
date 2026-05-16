@@ -17,9 +17,30 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <hadoop.version>3.3.6</hadoop.version>
     <pig.version>0.18.0</pig.version>
+    <hive.version>4.0.1</hive.version>
   </properties>
 
   <dependencies>
+     <dependency>
+      <groupId>org.apache.hive</groupId>
+      <artifactId>hive-exec</artifactId>
+      <version>${hive.version}</version>
+      <scope>provided</scope>
+      <!-- hive-exec pulls in many conflicting transitive deps; exclude them -->
+      <exclusions>
+        <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+ 
+    <dependency>
+      <groupId>org.apache.hive</groupId>
+      <artifactId>hive-serde</artifactId>
+      <version>${hive.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+      </exclusions>
+    </dependency>
 
      <!-- ===== Pig runtime (provided – must be on the cluster) ===== -->
     <dependency>
