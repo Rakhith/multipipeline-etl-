@@ -1,0 +1,8 @@
+Query 1 - Daily Traffic Summary
+Generated at: 2026-05-16 20:07:33 IST
+Hadoop run_id: NONE
+Pig run_id: NONE
+Hive run_id: NONE
+
+===== Hadoop-MapReduce =====
+batch_id	log_date	status_code	request_count	total_bytes

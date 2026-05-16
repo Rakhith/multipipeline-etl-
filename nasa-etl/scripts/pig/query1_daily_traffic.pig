@@ -70,14 +70,9 @@ q1_result = FOREACH grouped GENERATE
     SUM(valid.bytes_transferred) AS total_bytes:long;
 
 -- ============================================================
--- 6. Order by batch_id, log_date, status_code (deterministic output)
--- ============================================================
-q1_ordered = ORDER q1_result BY batch_id ASC, log_date ASC, status_code ASC;
-
--- ============================================================
--- 7. Store as TSV
+-- 6. Store as TSV
 --    Format matches DBLoader.loadQuery1 column order:
 --      batch_id \t log_date \t status_code \t request_count \t total_bytes
 -- ============================================================
-STORE q1_ordered INTO '$OUTPUT'
+STORE q1_result INTO '$OUTPUT'
     USING PigStorage('\t');

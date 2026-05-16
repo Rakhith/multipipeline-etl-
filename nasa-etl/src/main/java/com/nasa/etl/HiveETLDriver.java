@@ -14,19 +14,6 @@ import java.util.*;
  * exactly: same CLI flags, same DB tables, same runtime measurement semantics,
  * same proportional batch-runtime-slicing algorithm, same console output.
  *
- * Usage:
- *   java -cp nasa-etl.jar com.nasa.etl.hive.driver.HiveETLDriver \
- *     --input      <hdfs-or-local-input-dir>   \
- *     --output     <hdfs-or-local-output-base> \
- *     --db-url     <jdbc-url>                  \
- *     --db-user    <username>                  \
- *     --db-pass    <password>                  \
- *     --hive-jar   <path/to/nasa-etl.jar>      \
- *     --batch      <batch-size>                \
- *     [--exec-type local|mr|tez|spark]         \
- *     [--hive-db   <hive-database>]            \
- *     [--pipeline-name <name>]
- *
  * Execution flow:
  *   1. Parse args, open DB connection, create tables, reserve run_id.
  *   2. Run setup_table.hql  – creates EXTERNAL table over raw log files.
@@ -35,9 +22,9 @@ import java.util.*;
  *   5. Run Q3 HQL script    → load TSV output → save batch metadata.
  *   6. Update run_metadata  with total runtime.
  *
- * Hive is invoked via the `hive` CLI subprocess so that the full Hive runtime
- * is used.  All parameters are passed as --hivevar KEY=VALUE flags, matching
- * the ${hivevar:KEY} placeholders in the .hql scripts.
+ * Hive is invoked via the `beeline` CLI subprocess so that the full Hive
+ * runtime is used. All parameters are substituted directly into the script
+ * before execution (${hiveconf:KEY} / ${hivevar:KEY} replaced in-process).
  *
  * Output directories produced by Hive's INSERT OVERWRITE DIRECTORY are read
  * back as local TSV files by HiveDBLoader (Hive writes part-files that
@@ -81,7 +68,9 @@ public class HiveETLDriver {
         String hiveDb        = DEFAULT_HIVE_DB;
         String inputTable    = DEFAULT_INPUT_TABLE;
         int    batchSize     = 10_000;
-        String hiveUrl = "jdbc:hive2://localhost:10000";
+        String hiveUrl       = "jdbc:hive2://localhost:10000";
+        String hiveUser      = System.getProperty("user.name", "");
+        String hivePass      = "";
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -96,8 +85,9 @@ public class HiveETLDriver {
                 case "--hive-db"      : hiveDb       = args[++i]; break;
                 case "--input-table"  : inputTable   = args[++i]; break;
                 case "--batch"        : batchSize    = Integer.parseInt(args[++i]); break;
-                // In the args parsing block, add:
-                case "--hive-url": hiveUrl = args[++i]; break;
+                case "--hive-url"     : hiveUrl      = args[++i]; break;
+                case "--hive-user"    : hiveUser     = args[++i]; break;
+                case "--hive-pass"    : hivePass     = args[++i]; break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
         }
@@ -126,101 +116,60 @@ public class HiveETLDriver {
         System.out.printf(" Exec type   : %s%n",   execType);
         System.out.printf(" Hive DB     : %s%n",   hiveDb);
         System.out.printf(" Input table : %s%n",   inputTable);
+        System.out.printf(" Hive URL    : %s%n",   hiveUrl);
         System.out.printf(" DB URL      : %s%n",   dbUrl);
         System.out.println("========================================\n");
 
-        RunMetadata metadata = new RunMetadata(runId, pipelineName, batchSize);
-
-        // ======== START RUNTIME CLOCK ========
+        RunMetadata metadata = new RunMetadata(runId, pipelin        // ======== START RUNTIME CLOCK ========
         long globalStart = System.currentTimeMillis();
         Map<Integer, Long> batchRecordCounts = null;
 
         try {
-            // ---- Setup: create external table over raw log files ----
-            runHiveScript("setup_table.hql",
-                    Map.of(
-                        "INPUT_DIR",   inputDir,
-                        "INPUT_TABLE", inputTable,
-                        "DB_NAME",     hiveDb,
-                        "UDF_JAR",     hiveJar,
-                        "BATCH_SIZE",  String.valueOf(batchSize)
-                    ),
-                    execType, hiveUrl);
-
-            // ---- Q1: Daily Traffic Summary ----
+            // ---- Prepare master script for all phases ----
             String q1Out = outputBase + "/q1";
-            deleteIfExists(q1Out);
-            long q1Start = System.currentTimeMillis();
-            runHiveScript("query1_daily_traffic.hql",
-                    Map.of(
-                        "INPUT_TABLE", hiveDb + "." + inputTable,
-                        "OUTPUT_DIR",  q1Out,
-                        "UDF_JAR",     hiveJar,
-                        "BATCH_SIZE",  String.valueOf(batchSize)
-                    ),
-                    execType, hiveUrl);
-
-            batchRecordCounts = HiveDBLoader.loadQuery1(conn, q1Out, runId);
-            long q1End     = System.currentTimeMillis();
-            long q1Runtime = q1End - q1Start;
-
-            metadata.setQ1RuntimeMs(q1Runtime);
-            metadata.setTotalBatches(batchRecordCounts.size());
-            long q1TotalRecords = batchRecordCounts.values().stream()
-                                                   .mapToLong(Long::longValue).sum();
-            metadata.setTotalRecords(q1TotalRecords);
-            metadata.setAvgBatchSize(batchRecordCounts.isEmpty()
-                    ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
-            // Malformed count: best-effort from counter side-car if present
-            metadata.setMalformedCount(readCounterFile(q1Out, "MALFORMED_RECORDS"));
-
-            saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
-            System.out.printf("[Q1] runtime=%,d ms | batches=%,d | records=%,d%n",
-                              q1Runtime, batchRecordCounts.size(), q1TotalRecords);
-
-            // ---- Q2: Top Requested Resources ----
             String q2Out = outputBase + "/q2";
-            deleteIfExists(q2Out);
-            long q2Start = System.currentTimeMillis();
-            runHiveScript("query2_top_resources.hql",
-                    Map.of(
-                        "INPUT_TABLE", hiveDb + "." + inputTable,
-                        "OUTPUT_DIR",  q2Out,
-                        "UDF_JAR",     hiveJar,
-                        "BATCH_SIZE",  String.valueOf(batchSize)
-                    ),
-                    execType, hiveUrl);
-
-            HiveDBLoader.loadQuery2(conn, q2Out, runId);
-            long q2End     = System.currentTimeMillis();
-            long q2Runtime = q2End - q2Start;
-            metadata.setQ2RuntimeMs(q2Runtime);
-
-            saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
-            System.out.printf("[Q2] runtime=%,d ms | batches=%,d%n",
-                              q2Runtime, batchRecordCounts.size());
-
-            // ---- Q3: Hourly Error Analysis ----
             String q3Out = outputBase + "/q3";
+            
+            deleteIfExists(q1Out);
+            deleteIfExists(q2Out);
             deleteIfExists(q3Out);
+
+            Map<String, String> masterParams = new HashMap<>();
+            masterParams.put("INPUT_DIR",   inputDir);
+            masterParams.put("INPUT_TABLE", hiveDb + "." + inputTable);
+            masterParams.put("DB_NAME",     hiveDb);
+            masterParams.put("UDF_JAR",     hiveJar);
+            masterParams.put("BATCH_SIZE",  String.valueOf(batchSize));
+            masterParams.put("Q1_OUT",      q1Out);
+            masterParams.put("Q2_OUT",      q2Out);
+            masterParams.put("Q3_OUT",      q3Out);
+
+            // Execute setup + all 3 queries in ONE beeline session
+            runMasterHivePipeline(masterParams, execType, hiveUrl, hiveUser, hivePass);
+
+            // ---- Load results sequentially into PostgreSQL ----
+            long q1Start = System.currentTimeMillis();
+            batchRecordCounts = HiveDBLoader.loadQuery1(conn, q1Out, runId);
+            long q1Runtime = System.currentTimeMillis() - q1Start;
+            metadata.setQ1RuntimeMs(q1Runtime);
+            
+            long q1TotalRecords = batchRecordCounts.values().stream().mapToLong(Long::longValue).sum();
+            metadata.setTotalRecords(q1TotalRecords);
+            metadata.setTotalBatches(batchRecordCounts.size());
+            metadata.setAvgBatchSize(batchRecordCounts.isEmpty() ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
+            saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
+
+            long q2Start = System.currentTimeMillis();
+            HiveDBLoader.loadQuery2(conn, q2Out, runId);
+            long q2Runtime = System.currentTimeMillis() - q2Start;
+            metadata.setQ2RuntimeMs(q2Runtime);
+            saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
+
             long q3Start = System.currentTimeMillis();
-            runHiveScript("query3_hourly_error.hql",
-                    Map.of(
-                        "INPUT_TABLE", hiveDb + "." + inputTable,
-                        "OUTPUT_DIR",  q3Out,
-                        "UDF_JAR",     hiveJar,
-                        "BATCH_SIZE",  String.valueOf(batchSize)
-                    ),
-                    execType,hiveUrl);
-
             HiveDBLoader.loadQuery3(conn, q3Out, runId);
-            long q3End     = System.currentTimeMillis();
-            long q3Runtime = q3End - q3Start;
+            long q3Runtime = System.currentTimeMillis() - q3Start;
             metadata.setQ3RuntimeMs(q3Runtime);
-
             saveBatchMetadata(conn, runId, "Q3", q3Runtime, batchRecordCounts);
-            System.out.printf("[Q3] runtime=%,d ms | batches=%,d%n",
-                              q3Runtime, batchRecordCounts.size());
 
         } finally {
             // ======== STOP RUNTIME CLOCK ========
@@ -243,105 +192,125 @@ public class HiveETLDriver {
         }
     }
 
-    // ----------------------------------------------------------------- Hive execution
-
     /**
-     * Invokes the Hive CLI as a subprocess.
-     *
-     * Script resolution order:
-     *   1. scripts/<name>          (relative to CWD)
-     *   2. ../scripts/<name>       (when running from inside hive/ folder)
-     *   3. hive/scripts/<name>
-     *   4. scripts/hive/<name>
-     *
-     * All parameters are passed as --hivevar KEY=VALUE.
-     * The exec-type maps to Hive's --hiveconf hive.execution.engine setting.
-     *
-     * @param scriptName  filename of the .hql script (e.g. "query1_daily_traffic.hql")
-     * @param params      map of hivevar KEY → VALUE substitutions
-     * @param execType    "mr" | "tez" | "spark" | "local"
+     * Executes the entire Hive pipeline in a single beeline session.
      */
-    private static void runHiveScript(String scriptName,
-                                  Map<String, String> params,
-                                  String execType,
-                                  String hiveUrl) throws Exception {
+    private static void runMasterHivePipeline(Map<String, String> params,
+                                             String execType,
+                                             String hiveUrl,
+                                             String hiveUser,
+                                             String hivePass) throws Exception {
 
-    // Read the original script
-    String scriptPath = resolveScript(scriptName);
-    String scriptContent = new String(
-        java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(scriptPath)),
-        java.nio.charset.StandardCharsets.UTF_8);
+        String[] scripts = {
+            "setup_table.hql",
+            "query1_daily_traffic.hql",
+            "query2_top_resources.hql",
+            "query3_hourly_error.hql"
+        };
 
-    // Substitute all ${hiveconf:KEY} and ${hivevar:KEY} placeholders
-    for (Map.Entry<String, String> e : params.entrySet()) {
-        String key = e.getValue() == null ? "" : e.getValue();
-        scriptContent = scriptContent
-            .replace("${hiveconf:" + e.getKey() + "}", key)
-            .replace("${hivevar:"  + e.getKey() + "}", key);
-    }
+        StringBuilder masterContent = new StringBuilder();
+        masterContent.append("-- Master Hive Pipeline Script\n");
+        masterContent.append("SET hive.execution.engine=").append(mapExecType(execType)).append(";\n");
+        masterContent.append("SET hive.variable.substitute=true;\n\n");
 
-    // Write substituted script to a temp file
-    java.io.File tempScript = java.io.File.createTempFile("hive_etl_", ".hql");
-    tempScript.deleteOnExit();
-    java.nio.file.Files.write(tempScript.toPath(),
-        scriptContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        for (String sName : scripts) {
+            String sPath = resolveScript(sName);
+            String content = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(sPath)),
+                                       java.nio.charset.StandardCharsets.UTF_8);
+            
+            // Map specific output dirs to the unified script variables
+            if (sName.contains("query1")) content = content.replace("${OUTPUT_DIR}", "${Q1_OUT}");
+            if (sName.contains("query2")) content = content.replace("${OUTPUT_DIR}", "${Q2_OUT}");
+            if (sName.contains("query3")) content = content.replace("${OUTPUT_DIR}", "${Q3_OUT}");
 
-    System.out.println("[HiveDriver] Substituted script written to: "
-                       + tempScript.getAbsolutePath());
+            // Correct INPUT_TABLE for setup vs queries
+            if (sName.equals("setup_table.hql")) {
+                // In setup, we use raw table name (passed as INPUT_TABLE)
+                // But our masterParams has "DB.TABLE". Let's fix that.
+                String rawTable = params.get("INPUT_TABLE");
+                if (rawTable.contains(".")) rawTable = rawTable.substring(rawTable.lastIndexOf(".") + 1);
+                content = content.replace("${INPUT_TABLE}", rawTable);
+            }
 
-    // Build beeline command — no --hivevar or --hiveconf for params needed
-    List<String> cmd = new ArrayList<>();
-    cmd.add("beeline");
-    cmd.add("-u");
-    cmd.add(hiveUrl);
-    cmd.add("--hiveconf");
-    cmd.add("hive.execution.engine=" + mapExecType(execType));
-    cmd.add("--hiveconf");
-    cmd.add("hive.variable.substitute=false"); // already substituted, avoid double-processing
-    cmd.add("-f");
-    cmd.add(tempScript.getAbsolutePath());
+            masterContent.append("-- BEGIN ").append(sName).append("\n");
+            masterContent.append(content).append("\n");
+            masterContent.append("-- END ").append(sName).append("\n\n");
+        }
 
-    System.out.println("[HiveDriver] Running: " + String.join(" ", cmd));
+        // Final brute force substitution for any remaining ${var}
+        String finalContent = masterContent.toString();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            String val = e.getValue() == null ? "" : e.getValue();
+            finalContent = finalContent
+                .replace("${" + e.getKey() + "}", val)
+                .replace("${hivevar:" + e.getKey() + "}", val)
+                .replace("${hiveconf:" + e.getKey() + "}", val);
+        }
 
-    ProcessBuilder pb = new ProcessBuilder(cmd);
-    pb.inheritIO();
-    int exitCode = pb.start().waitFor();
+        java.io.File masterScript = java.io.File.createTempFile("hive_master_", ".hql");
+        masterScript.deleteOnExit();
+        java.nio.file.Files.write(masterScript.toPath(), 
+                                finalContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-    // Clean up temp file
-    tempScript.delete();
+        System.out.println("[HiveDriver] Running master script: " + masterScript.getAbsolutePath());
 
-    if (exitCode != 0) {
-        throw new RuntimeException("Hive script [" + scriptName +
-                                   "] failed with exit code " + exitCode);
-    }
-}
+        List<String> cmd = new ArrayList<>();
+        cmd.add("beeline");
+        cmd.add("-u");
+        cmd.add(hiveUrl);
+        if (hiveUser != null && !hiveUser.trim().isEmpty()) {
+            cmd.add("-n"); cmd.add(hiveUser);
+        }
+        if (hivePass != null && !hivePass.isEmpty()) {
+            cmd.add("-p"); cmd.add(hivePass);
+        }
+        cmd.add("-f");
+        cmd.add(masterScript.getAbsolutePath());
 
-    /**
-     * Maps the user-facing --exec-type flag to Hive's engine names.
-     * "local" stays as-is (Hive local mode).
-     */
-    private static String mapExecType(String execType) {
-        switch (execType.toLowerCase(Locale.ROOT)) {
-            case "mr"    :
-            case "mapreduce": return "mr";
-            case "tez"   : return "tez";
-            case "spark" : return "spark";
-            case "local" : return "mr";   // Hive uses mr in local mode too
-            default      : return execType;
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.inheritIO();
+        int exitCode = pb.start().waitFor();
+        masterScript.delete();
+
+        if (exitCode != 0) {
+            throw new RuntimeException("Master Hive pipeline failed with exit code " + exitCode);
         }
     }
 
+    /**
+     * Maps the user-facing --exec-type flag to Hive's engine names.
+     * "local" in this driver means local MR mode (not embedded).
+     */
+    private static String mapExecType(String execType) {
+        switch (execType.toLowerCase(Locale.ROOT)) {
+            case "mr"       :
+            case "mapreduce": return "mr";
+            case "tez"      : return "tez";
+            case "spark"    : return "spark";
+            case "local"    : return "mr";   // Hive uses mr in local mode too
+            default         : return execType;
+        }
+    }
+
+    /**
+     * Resolves the path to a Hive script.
+     * Checks scripts/hive/ first since that is the canonical location.
+     */
     private static String resolveScript(String scriptName) {
         String[] candidates = {
-            "scripts/"      + scriptName,
+            "scripts/hive/" + scriptName,       // canonical – run from nasa-etl/
+            "../scripts/hive/" + scriptName,    // run from nasa-etl/scripts/
+            "scripts/"      + scriptName,       // flat layout fallback
             "../scripts/"   + scriptName,
             "hive/scripts/" + scriptName,
-            "scripts/hive/" + scriptName,
         };
         for (String c : candidates) {
             if (new File(c).exists()) return c;
         }
-        return "scripts/" + scriptName;
+        throw new RuntimeException(
+            "Cannot find Hive script '" + scriptName + "'. " +
+            "Expected at: scripts/hive/" + scriptName +
+            " (run from the nasa-etl directory)");
     }
 
     // ----------------------------------------------------------------- batch metadata
@@ -391,8 +360,7 @@ public class HiveETLDriver {
     // ----------------------------------------------------------------- counter file
 
     /**
-     * Reads a counter value from a KEY=VALUE side-car file (_counters.txt)
-     * that a companion script may write alongside Hive output.
+     * Reads a counter value from a KEY=VALUE side-car file (_counters.txt).
      * Returns 0 if the file is absent (best-effort).
      */
     private static long readCounterFile(String outputDir, String key) {
@@ -432,13 +400,16 @@ public class HiveETLDriver {
 
     private static void printUsage() {
         System.err.println(
-            "Usage: java -cp nasa-etl.jar com.nasa.etl.hive.driver.HiveETLDriver \\\n" +
+            "Usage: java -cp nasa-etl.jar com.nasa.etl.HiveETLDriver \\\n" +
             "  --input        <hdfs-or-local-input-dir>   \\\n" +
             "  --output       <hdfs-or-local-output-base> \\\n" +
             "  --db-url       <jdbc-url>                  \\\n" +
             "  --db-user      <username>                  \\\n" +
             "  --db-pass      <password>                  \\\n" +
             "  --hive-jar     <path/to/nasa-etl.jar>      \\\n" +
+            "  [--hive-url    <beeline-jdbc-url>]         \\\n" +
+            "  [--hive-user   <hive-username>]            \\\n" +
+            "  [--hive-pass   <hive-password>]            \\\n" +
             "  [--exec-type   local|mr|tez|spark]         \\\n" +
             "  [--hive-db     <hive-database>]            \\\n" +
             "  [--input-table <table-name>]               \\\n" +
@@ -446,9 +417,10 @@ public class HiveETLDriver {
             "  [--batch       <batch-size>]               \n\n" +
             "Examples:\n" +
             "  --db-url jdbc:postgresql://localhost:5432/nasa_etl\n" +
-            "  --db-url jdbc:mysql://localhost:3306/nasa_etl\n" +
+            "  --hive-url jdbc:hive2://localhost:10000\n" +
+            "  --hive-url jdbc:hive2://    # embedded/local HiveServer2\n" +
             "  --exec-type mr       # MapReduce execution engine (default)\n" +
-            "  --exec-type tez      # Tez execution engine (faster, needs Tez installed)\n" +
+            "  --exec-type tez      # Tez execution engine (faster, needs Tez)\n" +
             "  --exec-type spark    # Spark execution engine\n" +
             "  --exec-type local    # local mode (single-node testing)"
         );

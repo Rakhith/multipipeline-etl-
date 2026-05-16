@@ -121,16 +121,10 @@ q3_formatted = FOREACH q3_result GENERATE
     distinct_error_hosts;
 
 -- ============================================================
--- 8. Order for deterministic output
--- ============================================================
-q3_ordered = ORDER q3_formatted
-    BY batch_id ASC, log_date ASC, log_hour ASC;
-
--- ============================================================
--- 9. Store as TSV
+-- 8. Store as TSV
 --    Format matches PigDBLoader.loadQuery3 column order:
 --      batch_id \t log_date \t log_hour \t error_request_count \t
 --      total_request_count \t error_rate \t distinct_error_hosts
 -- ============================================================
-STORE q3_ordered INTO '$OUTPUT'
+STORE q3_formatted INTO '$OUTPUT'
     USING PigStorage('\t');

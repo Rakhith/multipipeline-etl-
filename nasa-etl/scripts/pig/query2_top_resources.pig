@@ -90,40 +90,21 @@ path_stats = FOREACH by_path {
 by_batch = GROUP path_stats BY batch_id;
 
 -- ============================================================
--- 8. Apply Top20Filter UDF to get the top 20 per batch
---    The UDF mirrors the in-reducer logic from TopResourceReducer:
---    sort descending by request_count, keep first 20.
+-- 8. Project the columns for storage
+--    We store all aggregates and let the database/reporter handle the top-20
+--    selection for maximum stability in local mode.
 -- ============================================================
-top20_bags = FOREACH by_batch {
-    -- Build a bag of (resource_path, request_count, total_bytes, distinct_host_count)
-    stats_bag = FOREACH path_stats GENERATE
-        resource_path, request_count, total_bytes, distinct_host_count;
-    GENERATE
-        group AS batch_id:int,
-        FLATTEN(Top20Filter(stats_bag));
-}
-
--- ============================================================
--- 9. Flatten the top-20 bag into individual rows
--- ============================================================
--- After FLATTEN the schema is: batch_id, resource_path, request_count,
---   total_bytes, distinct_host_count
-q2_result = FOREACH top20_bags GENERATE
+q2_result = FOREACH path_stats GENERATE
     batch_id         AS batch_id:int,
-    $1               AS resource_path:chararray,
-    $2               AS request_count:long,
-    $3               AS total_bytes:long,
-    $4               AS distinct_host_count:long;
+    resource_path    AS resource_path:chararray,
+    request_count    AS request_count:long,
+    total_bytes      AS total_bytes:long,
+    distinct_host_count AS distinct_host_count:long;
 
 -- ============================================================
--- 10. Order for deterministic output
--- ============================================================
-q2_ordered = ORDER q2_result BY batch_id ASC, request_count DESC;
-
--- ============================================================
--- 11. Store as TSV
+-- 10. Store as TSV
 --    Format matches PigDBLoader.loadQuery2 column order:
 --      batch_id \t resource_path \t request_count \t total_bytes \t distinct_host_count
 -- ============================================================
-STORE q2_ordered INTO '$OUTPUT'
+STORE q2_result INTO '$OUTPUT'
     USING PigStorage('\t');

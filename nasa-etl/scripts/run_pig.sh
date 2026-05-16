@@ -37,15 +37,21 @@ set -euo pipefail
 # ---- defaults ----
 INPUT=""
 OUTPUT="/tmp/nasa-pig-out"
-DB_URL="jdbc:postgresql://localhost:5432/nosql"
-DB_USER="user"
-DB_PASS="password"
+# IMPORTANT: Use the HDFS path (same as MapReduce) to ensure Pig reads each file
+# exactly once. If you pass a LOCAL directory that also contains .gz files,
+# PigStorage will load both the decompressed AND gzipped copies → 2x counts.
+# Correct:  --input /user/hadoop/nasa-logs          (HDFS, local mode OK for pseudo-dist)
+# Correct:  --input hdfs:///user/hadoop/nasa-logs   (full HDFS URL)
+# Wrong:    --input /Users/you/Desktop/multipipeline-etl (has both .gz and decompressed)
+DB_URL="jdbc:postgresql://localhost:5432/nasa_etl"
+DB_USER="rakshith"
+DB_PASS=""
 EXEC_TYPE="local"
 BATCH_SIZE=10000
 PIPELINE_NAME="Apache-Pig"
 # export PIG_HOME=$HOME/pig
 # export PATH=$PATH:$PIG_HOME/bin
-export PIG_CLASSPATH=$HADOOP_HOME/etc/hadoop
+export PIG_CLASSPATH="${HADOOP_HOME:-/usr/local/hadoop}/etc/hadoop"
 export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
 echo $(pwd)
 # Auto-detect fat JAR in target/ or current directory
@@ -93,7 +99,13 @@ echo " JAR         : $PIG_JAR"
 echo "========================================"
 
 # ---- run the Java driver (which invokes Pig internally) ----
-java -cp "$PIG_JAR" com.nasa.etl.PigETLDriver \
+# Increase heap size for Pig operations (GROUP BY / ORDER BY in local mode)
+export PIG_OPTS="-Xmx2g"
+
+exec java \
+  $PIG_OPTS \
+  -cp "$PIG_JAR" \
+  com.nasa.etl.PigETLDriver \
     --input        "$INPUT"        \
     --output       "$OUTPUT"       \
     --db-url       "$DB_URL"       \
