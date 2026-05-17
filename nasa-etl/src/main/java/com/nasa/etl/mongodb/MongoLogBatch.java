@@ -8,12 +8,13 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Batching helper for the MongoDB ingestion pipeline.
+ * Insert-buffering helper for the MongoDB ingestion pipeline.
  *
  * Accumulates {@link LogRecord} instances (including malformed ones, which are
  * still stored in Mongo so the malformed flag can be reported) and emits a
  * completed batch — a ready-to-insert {@code List<Document>} — whenever the
- * batch size threshold is crossed.
+ * batch size threshold is crossed. Document batch ids are ISO week ids
+ * (YYYYWW), so one week is one logical ETL batch.
  *
  * Usage pattern:
  * <pre>
@@ -32,10 +33,6 @@ public class MongoLogBatch {
 
     private final int           batchSize;
     private final List<Document> buffer;
-    private int batchId = 1; //first batchID
-
-    /** Tracks how many complete batches have been emitted (excludes the tail flush). */
-    private int completedBatches = 0;
 
     public MongoLogBatch(int batchSize) {
         if (batchSize <= 0) {
@@ -52,9 +49,9 @@ public class MongoLogBatch {
      *         batch is now full; {@link Collections#emptyList()} otherwise.
      */
     public List<Document> add(LogRecord record) {
+        int batchId = MongoWeekBatching.batchIdForIsoDate(record.getLogDate());
         buffer.add(MongoLogRecord.toDocument(record, batchId));
         if (buffer.size() >= batchSize) {
-            completedBatches++;
             return drainBuffer();
         }
         return Collections.emptyList(); // signals there is nothing to return - batching incomplete 
@@ -72,16 +69,9 @@ public class MongoLogBatch {
         return drainBuffer();
     }
 
-
-    public int getCurrentBatchId() { return batchId; }
-
-    public int getCompletedBatches() { return completedBatches; }
-
-
     private List<Document> drainBuffer() {
         List<Document> snapshot = new ArrayList<>(buffer);
         buffer.clear();
-        batchId++;           // next records belong to the next batch
         return snapshot;
     }
 }

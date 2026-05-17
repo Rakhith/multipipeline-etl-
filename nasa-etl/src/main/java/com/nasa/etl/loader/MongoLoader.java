@@ -6,6 +6,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.nasa.etl.common.LogRecord;
 import com.nasa.etl.mongodb.MongoLogBatch;
+import com.nasa.etl.mongodb.MongoWeekBatching;
 import org.bson.Document;
 
 import java.io.BufferedReader;
@@ -14,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.List;
 
 /**
@@ -45,11 +48,13 @@ public class MongoLoader {
         public long validRecords;
         public long malformedRecords;
         public long batchesInserted;
+        public final Map<Integer, Long> batchRecordCounts = new TreeMap<>();
 
         public long getTotalLines()       { return totalLines; }
         public long getValidRecords()     { return validRecords; }
         public long getMalformedRecords() { return malformedRecords; }
         public long getBatchesInserted()  { return batchesInserted; }
+        public Map<Integer, Long> getBatchRecordCounts() { return batchRecordCounts; }
     }
 
 
@@ -106,7 +111,8 @@ public class MongoLoader {
             System.out.printf(" Lines read  : %,d%n", stats.totalLines);
             System.out.printf(" Valid       : %,d%n", stats.validRecords);
             System.out.printf(" Malformed   : %,d%n", stats.malformedRecords);
-            System.out.printf(" Batches     : %,d%n", stats.batchesInserted);
+            System.out.printf(" Week batches: %,d%n", stats.batchRecordCounts.size());
+            System.out.printf(" Insert ops  : %,d%n", stats.batchesInserted);
             System.out.printf(" Runtime     : %,d ms%n", runtimeMs);
             System.out.println("========================================");
         }
@@ -157,6 +163,8 @@ public class MongoLoader {
                     stats.malformedRecords++;
                 } else {
                     stats.validRecords++;
+                    int batchId = MongoWeekBatching.batchIdForIsoDate(record.getLogDate());
+                    stats.batchRecordCounts.merge(batchId, 1L, Long::sum);
                 }
 
                 // add() returns a non-empty snapshot when the batch is full.

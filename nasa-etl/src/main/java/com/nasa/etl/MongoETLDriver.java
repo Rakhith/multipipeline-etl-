@@ -14,7 +14,10 @@ import org.bson.Document;
 import com.mongodb.client.AggregateIterable;
 
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * MongoETLDriver – Main entry point for the MongoDB pipeline of the
@@ -55,7 +58,6 @@ import java.util.List;
  *     --db-url     <jdbc-url>                \
  *     --db-user    <db-username>             \
  *     --db-pass    <db-password>             \
- *     --batch      <batch-size>              \
  *     [--drop]                               \
  *     [--pipeline-name <label>]
  *
@@ -68,7 +70,6 @@ import java.util.List;
  *     --db-url     jdbc:postgresql://localhost:5432/nasa_etl \
  *     --db-user    postgres                    \
  *     --db-pass    secret                      \
- *     --batch      50000                       \
  *     --drop
  */
 public class MongoETLDriver {
@@ -77,6 +78,7 @@ public class MongoETLDriver {
     private static final String DEFAULT_MONGO_URI     = "mongodb://localhost:27017";
     private static final String DEFAULT_DATABASE      = "nasa_etl";
     private static final String DEFAULT_COLLECTION    = "logs";
+    private static final int    INSERT_CHUNK_SIZE     = MongoLoader.DEFAULT_BATCH_SIZE;
 
     // ------------------------------------------------------------------ entry
 
@@ -91,7 +93,6 @@ public class MongoETLDriver {
         String dbUser        = "";
         String dbPass        = "";
         String pipelineName  = DEFAULT_PIPELINE_NAME;
-        int    batchSize     = MongoLoader.DEFAULT_BATCH_SIZE;
         boolean dropFirst    = false;
 
         for (int i = 0; i < args.length; i++) {
@@ -104,7 +105,6 @@ public class MongoETLDriver {
                 case "--db-user":       dbUser         = args[++i]; break;
                 case "--db-pass":       dbPass         = args[++i]; break;
                 case "--pipeline-name": pipelineName   = args[++i]; break;
-                case "--batch":         batchSize      = Integer.parseInt(args[++i]); break;
                 case "--drop":          dropFirst      = true; break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
@@ -124,7 +124,7 @@ public class MongoETLDriver {
         // ---- open DB connection, create tables, reserve run ID ----
         Connection conn = DBLoader.openConnection(dbUrl, dbUser, dbPass);
         DBLoader.createTables(conn);
-        int runId = DBLoader.createRunMetadata(conn, pipelineName, batchSize);
+        int runId = DBLoader.createRunMetadata(conn, pipelineName, 0);
 
         System.out.println("========================================");
         System.out.println(" NASA HTTP Log ETL – MongoDB MapReduce ");
@@ -135,7 +135,6 @@ public class MongoETLDriver {
         System.out.printf(" Database   : %s%n",  databaseName);
         System.out.printf(" Collection : %s%n",  collectionName);
         System.out.printf(" Pipeline   : %s%n",  pipelineName);
-        System.out.printf(" Batch size : %,d%n", batchSize);
         System.out.printf(" DB URL     : %s%n",  dbUrl);
         System.out.println("========================================\n");
 
@@ -161,22 +160,23 @@ public class MongoETLDriver {
             long ingestStart = System.currentTimeMillis();
 
             MongoLoader.LoadStats ingestStats =
-                MongoLoader.load(java.nio.file.Paths.get(inputPath), collection, batchSize);
+                MongoLoader.load(java.nio.file.Paths.get(inputPath), collection, INSERT_CHUNK_SIZE);
 
             long ingestEnd = System.currentTimeMillis();
             System.out.printf("[Phase 1] Done. lines=%,d | valid=%,d | malformed=%,d "
-                              + "| batches=%,d | time=%,d ms%n",
+                              + "| week_batches=%,d | time=%,d ms%n",
                 ingestStats.totalLines,
                 ingestStats.validRecords,
                 ingestStats.malformedRecords,
-                ingestStats.batchesInserted,
+                ingestStats.batchRecordCounts.size(),
                 ingestEnd - ingestStart);
 
             // ================================================================
             // Phase 2+3 – MapReduce queries + DB load
             // ================================================================
 
-            RunMetadata metadata = new RunMetadata(runId, pipelineName, batchSize);
+            RunMetadata metadata = new RunMetadata(runId, pipelineName, 0);
+            Map<Integer, Long> batchRecordCounts = null;
 
             // ---- Q1 ----
             System.out.println("\n[Q1] Running Daily Traffic MapReduce...");
@@ -186,11 +186,12 @@ public class MongoETLDriver {
             long q1End   = System.currentTimeMillis();
 
             int q1Loaded = DBLoader.loadQuery1(conn, q1Docs, runId);
+            batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
             saveQueryMetadata(conn, metadata, runId, 1, "Q1",
                               q1Start, q1End,
                               ingestStats.validRecords,
                               ingestStats.malformedRecords,
-                              ingestStats.batchesInserted);
+                              batchRecordCounts);
 
             System.out.printf("[Q1] runtime=%,d ms | rows=%d%n",
                 q1End - q1Start, q1Loaded);
@@ -205,9 +206,8 @@ public class MongoETLDriver {
             int q2Loaded = DBLoader.loadQuery2(conn, q2Docs, runId);
             metadata.setQ2RuntimeMs(q2End - q2Start);
             saveQueryBatchMetadataOnly(conn, runId, "Q2",
-                                       ingestStats.validRecords,
                                        q2End - q2Start,
-                                       ingestStats.batchesInserted);
+                                       batchRecordCounts);
 
             System.out.printf("[Q2] runtime=%,d ms | rows=%d%n",
                 q2End - q2Start, q2Loaded);
@@ -222,9 +222,8 @@ public class MongoETLDriver {
             int q3Loaded = DBLoader.loadQuery3(conn, q3Docs, runId);
             metadata.setQ3RuntimeMs(q3End - q3Start);
             saveQueryBatchMetadataOnly(conn, runId, "Q3",
-                                       ingestStats.validRecords,
                                        q3End - q3Start,
-                                       ingestStats.batchesInserted);
+                                       batchRecordCounts);
 
             System.out.printf("[Q3] runtime=%,d ms | rows=%d%n",
                 q3End - q3Start, q3Loaded);
@@ -265,12 +264,12 @@ public class MongoETLDriver {
                                           long startMs, long endMs,
                                           long validRecords,
                                           long malformedRecords,
-                                          long batchCount) throws Exception {
+                                          Map<Integer, Long> batchRecordCounts) throws Exception {
         long runtimeMs = endMs - startMs;
+        long batchCount = batchRecordCounts == null ? 0 : batchRecordCounts.size();
         metadata.addQueryStats(queryNumber, runtimeMs,
                                validRecords, malformedRecords, batchCount);
-        saveLogicalBatchRows(conn, runId, queryName,
-                             validRecords, runtimeMs, batchCount);
+        saveBatchRowsFromCounts(conn, runId, queryName, runtimeMs, batchRecordCounts);
         System.out.printf("[%s] runtime=%,d ms | valid=%,d | malformed=%,d "
                           + "| batches=%,d | avg_batch=%.1f%n",
             queryName, runtimeMs, validRecords, malformedRecords,
@@ -284,33 +283,69 @@ public class MongoETLDriver {
     private static void saveQueryBatchMetadataOnly(Connection conn,
                                                    int runId,
                                                    String queryName,
-                                                   long records,
                                                    long runtimeMs,
-                                                   long batches) throws Exception {
-        saveLogicalBatchRows(conn, runId, queryName, records, runtimeMs, batches);
+                                                   Map<Integer, Long> batchRecordCounts)
+            throws Exception {
+        saveBatchRowsFromCounts(conn, runId, queryName, runtimeMs, batchRecordCounts);
     }
 
     /**
-     * Distribute records and runtime evenly across logical batch rows.
-     * Mirrors the identical method in {@code ETLDriver} so batch_metadata has
-     * the same structure regardless of pipeline.
+     * Distribute query runtime proportionally across real weekly batch rows.
      */
-    private static void saveLogicalBatchRows(Connection conn, int runId,
-                                             String queryName,
-                                             long records, long runtimeMs,
-                                             long batches) throws Exception {
-        long safeBatches  = Math.max(1, batches);
-        long baseRecords  = records / safeBatches;
-        long extraRecords = records % safeBatches;
-        long baseRuntime  = runtimeMs / safeBatches;
-        long extraRuntime = runtimeMs % safeBatches;
-
-        for (int i = 1; i <= safeBatches; i++) {
-            long batchRecords = baseRecords + (i <= extraRecords ? 1 : 0);
-            long batchRuntime = baseRuntime + (i <= extraRuntime ? 1 : 0);
-            DBLoader.saveBatchMetadata(conn, runId, i, queryName,
-                                       batchRecords, batchRuntime);
+    private static void saveBatchRowsFromCounts(Connection conn, int runId,
+                                                String queryName, long runtimeMs,
+                                                Map<Integer, Long> batchRecordCounts)
+            throws Exception {
+        if (batchRecordCounts == null || batchRecordCounts.isEmpty()) {
+            DBLoader.saveBatchMetadata(conn, runId, 1, queryName, 0L, runtimeMs);
+            return;
         }
+
+        long totalRecords = 0;
+        for (long count : batchRecordCounts.values()) totalRecords += count;
+
+        List<BatchRuntimeSlice> slices = new ArrayList<>();
+        long assigned = 0;
+
+        for (Map.Entry<Integer, Long> entry : batchRecordCounts.entrySet()) {
+            int batchId = entry.getKey();
+            long records = entry.getValue();
+            double exact = totalRecords > 0
+                    ? ((double) runtimeMs * records) / totalRecords
+                    : 0.0;
+            long base = (long) Math.floor(exact);
+            assigned += base;
+            slices.add(new BatchRuntimeSlice(batchId, records, base, exact - base));
+        }
+
+        long remaining = runtimeMs - assigned;
+        slices.sort(Comparator.comparingDouble(BatchRuntimeSlice::fractionalRemainder).reversed());
+        for (int i = 0; i < slices.size() && remaining > 0; i++, remaining--) {
+            slices.get(i).runtimeMs++;
+        }
+        slices.sort(Comparator.comparingInt(BatchRuntimeSlice::batchId));
+
+        for (BatchRuntimeSlice slice : slices) {
+            DBLoader.saveBatchMetadata(conn, runId, slice.batchId, queryName,
+                                       slice.records, slice.runtimeMs);
+        }
+    }
+
+    private static class BatchRuntimeSlice {
+        final int batchId;
+        final long records;
+        long runtimeMs;
+        final double fractional;
+
+        BatchRuntimeSlice(int batchId, long records, long runtimeMs, double fractional) {
+            this.batchId = batchId;
+            this.records = records;
+            this.runtimeMs = runtimeMs;
+            this.fractional = fractional;
+        }
+
+        int batchId() { return batchId; }
+        double fractionalRemainder() { return fractional; }
     }
 
     // ----------------------------------------------------------------- usage
@@ -325,7 +360,6 @@ public class MongoETLDriver {
             "  [--mongo-uri  mongodb://localhost:27017]  \\\n" +
             "  [--database   nasa_etl]                  \\\n" +
             "  [--collection logs]                      \\\n" +
-            "  [--batch      <batch-size>]              \\\n" +
             "  [--drop]                                 \\\n" +
             "  [--pipeline-name <label>]                \n\n" +
             "JDBC URL examples:\n" +
