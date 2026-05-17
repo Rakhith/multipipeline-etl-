@@ -2,8 +2,9 @@ package com.nasa.etl.hive.loader;
 
 import com.nasa.etl.common.RunMetadata;
 
-import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -215,7 +216,7 @@ public class HiveDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ1Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ1Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 5) continue;
 
@@ -261,7 +262,7 @@ public class HiveDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ2Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ2Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 5) continue;
 
@@ -306,7 +307,7 @@ public class HiveDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ3Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ3Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 7) continue;
 
@@ -368,6 +369,62 @@ public class HiveDBLoader {
         Connection conn = DriverManager.getConnection(url, user, pass);
         conn.setAutoCommit(false);
         return conn;
+    }
+
+    /**
+     * If dirPath is an HDFS path, downloads it to a local temp directory
+     * using `hdfs dfs -get` and returns the local path.
+     * If it is already a local path, returns it unchanged.
+     *
+     * Mirrors PigDBLoader.downloadIfHdfs() exactly so both loaders behave
+     * identically when the pipeline writes output to HDFS.
+     */
+    static String downloadIfHdfs(String dirPath) throws IOException {
+        boolean isHdfs = dirPath.startsWith("hdfs://")
+                      || dirPath.startsWith("hdfs:/")
+                      || dirPath.startsWith("viewfs://")
+                      || dirPath.startsWith("/user/");   // bare HDFS convention
+
+        if (!isHdfs) return dirPath;   // already local, nothing to do
+
+        // Create a unique local temp dir for this download
+        Path localTmp = Files.createTempDirectory("hive-hdfs-dl-");
+        String localDir = localTmp.toAbsolutePath().toString();
+
+        List<String> cmd = Arrays.asList("hdfs", "dfs", "-get", dirPath, localDir);
+        System.out.println("[HiveDBLoader] Downloading HDFS path to local: "
+                           + dirPath + " -> " + localDir);
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(true);
+        Process proc = pb.start();
+
+        // Drain stdout/stderr so the process never blocks on a full pipe buffer
+        StringBuilder output = new StringBuilder();
+        try (java.io.BufferedReader br = new java.io.BufferedReader(
+                new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) output.append(line).append('\n');
+        }
+
+        int exitCode;
+        try {
+            exitCode = proc.waitFor();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("hdfs dfs -get interrupted", e);
+        }
+
+        if (exitCode != 0) {
+            throw new IOException("hdfs dfs -get failed (exit " + exitCode + "):\n" + output);
+        }
+
+        // -get downloads the src directory itself into localDir, so the actual
+        // content sits at localDir/<basename-of-dirPath>
+        String baseName = dirPath.replaceAll(".*[/]", "");   // last path component
+        String resultPath = localDir + File.separator + baseName;
+        System.out.println("[HiveDBLoader] Download complete: " + resultPath);
+        return resultPath;
     }
 
     /**

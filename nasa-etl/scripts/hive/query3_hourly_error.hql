@@ -1,26 +1,4 @@
--- =============================================================================
--- query3_hourly_error.hql
--- NASA HTTP Log ETL – Hive Pipeline
--- Query 3: Hourly Error Analysis
---
--- For each (batch_id, log_date, log_hour) group, compute:
---   error_request_count  – requests with status 400–599
---   total_request_count  – all requests in that hour
---   error_rate           – error_request_count / total_request_count
---   distinct_error_hosts – unique hosts that produced ≥1 error in that hour
---
--- Output schema (TSV, matches DBLoader / PigDBLoader contract):
---   batch_id \t log_date \t log_hour \t error_request_count \t
---   total_request_count \t error_rate \t distinct_error_hosts
---
--- Parameters (passed via --hiveconf on CLI or by HiveETLDriver):
---   INPUT_TABLE  : name of the external raw-log table  (default: nasa_raw_logs)
---   OUTPUT_DIR   : HDFS/local path for TSV output
---   UDF_JAR      : path to the fat JAR containing Hive UDFs
---   BATCH_SIZE   : records per logical batch (informational; batching is week-based)
--- =============================================================================
-
-ADD JAR target/nasa-etl-1.0.0-shaded.jar;
+ADD JAR ${UDF_JAR};
 
 CREATE TEMPORARY FUNCTION parse_log_line AS 'com.nasa.etl.hive.udf.LogParserUDF';
 
@@ -39,13 +17,13 @@ SELECT
     parsed.host        AS host
 FROM (
     SELECT parse_log_line(line) AS parsed
-    FROM default.nasa_raw_logs
+    FROM ${INPUT_TABLE}
 ) tmp
 WHERE parsed.malformed = 0
   AND parsed.log_date IS NOT NULL
   AND parsed.log_date != '';
 
-INSERT OVERWRITE DIRECTORY '/tmp/hive-output/q3'
+INSERT OVERWRITE DIRECTORY '${OUTPUT_DIR}'
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY '\t'
 SELECT
@@ -56,10 +34,13 @@ SELECT
         AS error_request_count,
     COUNT(*)
         AS total_request_count,
-    CAST(
-        COUNT(CASE WHEN status_code >= 400 AND status_code <= 599 THEN 1 END)
-        AS DOUBLE
-    ) / COUNT(*)
+    ROUND(
+        CAST(
+            COUNT(CASE WHEN status_code >= 400 AND status_code <= 599 THEN 1 END)
+            AS DOUBLE
+        ) / COUNT(*),
+        6
+    )
         AS error_rate,
     COUNT(DISTINCT CASE WHEN status_code >= 400 AND status_code <= 599 THEN host END)
         AS distinct_error_hosts

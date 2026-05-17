@@ -15,22 +15,22 @@
 --   DB_NAME    : Hive database to use (default: default)
 -- =============================================================================
 
-CREATE DATABASE IF NOT EXISTS ${hiveconf:DB_NAME};
-USE ${hiveconf:DB_NAME};
+CREATE DATABASE IF NOT EXISTS ${DB_NAME};
+USE ${DB_NAME};
 
 -- Drop and recreate so that the LOCATION always points to the current input.
 -- EXTERNAL tables are safe to drop (data on HDFS is not deleted).
-DROP TABLE IF EXISTS ${hiveconf:INPUT_TABLE};
+DROP TABLE IF EXISTS ${INPUT_TABLE};
 
-CREATE EXTERNAL TABLE ${hiveconf:INPUT_TABLE} (
+CREATE EXTERNAL TABLE ${INPUT_TABLE} (
     line STRING
 )
 STORED AS TEXTFILE
-LOCATION '${hiveconf:INPUT_DIR}'
+LOCATION '${INPUT_DIR}'
 TBLPROPERTIES (
     'skip.header.line.count' = '0',
     'serialization.null.format' = ''
 );
 
 -- Quick sanity count so the driver can see that lines were loaded
-SELECT COUNT(*) AS total_lines FROM ${hiveconf:INPUT_TABLE};
+SELECT COUNT(*) AS total_lines FROM ${INPUT_TABLE};

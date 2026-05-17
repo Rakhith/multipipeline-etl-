@@ -1,4 +1,4 @@
-ADD JAR target/nasa-etl-1.0.0-shaded.jar;
+ADD JAR ${UDF_JAR};
 
 CREATE TEMPORARY FUNCTION parse_log_line AS 'com.nasa.etl.hive.udf.LogParserUDF';
 
@@ -18,7 +18,7 @@ SELECT
     parsed.bytes_transferred AS bytes_transferred
 FROM (
     SELECT parse_log_line(line) AS parsed
-    FROM default.nasa_raw_logs
+    FROM ${INPUT_TABLE}
 ) tmp
 WHERE parsed.malformed = 0
   AND parsed.log_date IS NOT NULL
@@ -49,13 +49,13 @@ SELECT
     request_count,
     total_bytes,
     distinct_host_count,
-    RANK() OVER (
+    ROW_NUMBER() OVER (
         PARTITION BY batch_id
-        ORDER BY request_count DESC, total_bytes DESC
-    ) AS rnk
+        ORDER BY request_count DESC
+    ) AS rn
 FROM resource_agg;
 
-INSERT OVERWRITE DIRECTORY '/tmp/hive-output/q2'
+INSERT OVERWRITE DIRECTORY '${OUTPUT_DIR}'
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY '\t'
 SELECT
@@ -65,8 +65,8 @@ SELECT
     total_bytes,
     distinct_host_count
 FROM resource_ranked
-WHERE rnk <= 20
-ORDER BY batch_id, request_count DESC, resource_path;
+WHERE rn <= 20
+ORDER BY batch_id, request_count DESC;
 
 DROP VIEW IF EXISTS resource_ranked;
 DROP VIEW IF EXISTS resource_agg;

@@ -1,4 +1,4 @@
-ADD JAR target/nasa-etl-1.0.0-shaded.jar;
+ADD JAR ${UDF_JAR};
 
 CREATE TEMPORARY FUNCTION parse_log_line AS 'com.nasa.etl.hive.udf.LogParserUDF';
 
@@ -16,13 +16,13 @@ SELECT
     parsed.bytes_transferred AS bytes_transferred
 FROM (
     SELECT parse_log_line(line) AS parsed
-    FROM default.nasa_raw_logs
+    FROM ${INPUT_TABLE}
 ) tmp
 WHERE parsed.malformed = 0
   AND parsed.log_date IS NOT NULL
   AND parsed.log_date != '';
 
-INSERT OVERWRITE DIRECTORY '/tmp/hive-output/q1'
+INSERT OVERWRITE DIRECTORY '${OUTPUT_DIR}'
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY '\t'
 SELECT
