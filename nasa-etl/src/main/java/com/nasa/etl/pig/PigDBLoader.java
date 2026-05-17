@@ -3,11 +3,9 @@ package com.nasa.etl.pig.loader;
 import com.nasa.etl.common.RunMetadata;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
 
@@ -206,7 +204,7 @@ public class PigDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ1Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ1Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 5) continue;
 
@@ -252,7 +250,7 @@ public class PigDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ2Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ2Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 5) continue;
 
@@ -297,7 +295,7 @@ public class PigDBLoader {
         int loaded = 0;
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (String line : readPartFiles(localQ3Dir)) {
+            for (String line : readPartFiles(downloadIfHdfs(localQ3Dir))) {
                 String[] cols = line.split("\t");
                 if (cols.length < 7) continue;
 
@@ -362,35 +360,89 @@ public class PigDBLoader {
     }
 
     /**
+     * If dirPath is an HDFS path, downloads it to a local temp directory
+     * using `hdfs dfs -get` and returns the local path.
+     * If it is already a local path, returns it unchanged.
+     *
+     * This keeps PigDBLoader free of any Hadoop API dependency —
+     * readPartFiles only ever sees a plain local directory.
+     */
+    static String downloadIfHdfs(String dirPath) throws IOException {
+        boolean isHdfs = dirPath.startsWith("hdfs://")
+                      || dirPath.startsWith("hdfs:/")
+                      || dirPath.startsWith("viewfs://")
+                      || dirPath.startsWith("/user/");   // bare HDFS convention
+
+        if (!isHdfs) return dirPath;   // already local, nothing to do
+
+        // Create a unique local temp dir for this download
+        java.nio.file.Path localTmp = java.nio.file.Files.createTempDirectory("pig-hdfs-dl-");
+        String localDir = localTmp.toAbsolutePath().toString();
+
+        // hdfs dfs -get <hdfs-src> <local-dst>
+        // Downloads the entire output directory into localDir.
+        List<String> cmd = new ArrayList<>(Arrays.asList(
+                "hdfs", "dfs", "-get", dirPath, localDir));
+
+        System.out.println("[PigDBLoader] Downloading HDFS path to local: " + dirPath + " -> " + localDir);
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(true);   // merge stderr into stdout
+        Process proc = pb.start();
+
+        // Drain stdout/stderr so the process never blocks on a full pipe buffer
+        StringBuilder output = new StringBuilder();
+        try (java.io.BufferedReader br = new java.io.BufferedReader(
+                new java.io.InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) output.append(line).append('\n');
+        }
+
+        int exitCode;
+        try { exitCode = proc.waitFor(); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("hdfs dfs -get interrupted", e); }
+
+        if (exitCode != 0) {
+            throw new IOException("hdfs dfs -get failed (exit " + exitCode + "):\n" + output);
+        }
+
+        // -get downloads the src directory itself into localDir, so the actual
+        // content sits at localDir/<basename-of-dirPath>
+        String baseName = dirPath.replaceAll(".*[/]", "");   // last path component
+        String resultPath = localDir + File.separator + baseName;
+        System.out.println("[PigDBLoader] Download complete: " + resultPath);
+        return resultPath;
+    }
+
+    /**
      * Reads all part-r-* and part-m-* files from a LOCAL directory.
-     * Pig runs locally will write output here.
-     * For HDFS-mode runs, the driver should download to a temp dir first.
+     * Always receives a local path — call downloadIfHdfs() first if the
+     * output directory may be on HDFS.
      */
     static List<String> readPartFiles(String dirPath) throws IOException {
         List<String> lines = new ArrayList<>();
-        Path dir = Paths.get(dirPath);
+        java.nio.file.Path dir = java.nio.file.Paths.get(dirPath);
 
-        if (!Files.isDirectory(dir)) {
-            // Single file fallback
-            if (Files.isRegularFile(dir)) {
-                lines.addAll(Files.readAllLines(dir, StandardCharsets.UTF_8));
+        if (!java.nio.file.Files.isDirectory(dir)) {
+            if (java.nio.file.Files.isRegularFile(dir)) {
+                lines.addAll(java.nio.file.Files.readAllLines(dir, StandardCharsets.UTF_8));
             }
             return lines;
         }
 
-        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
-            List<Path> parts = stream
-                .filter(Files::isRegularFile)
+        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(dir)) {
+            List<java.nio.file.Path> parts = stream
+                .filter(java.nio.file.Files::isRegularFile)
                 .filter(p -> {
                     String n = p.getFileName().toString();
                     return n.startsWith("part-r-") || n.startsWith("part-m-")
-                           || n.equals("part-00000"); // Pig local mode
+                           || n.equals("part-00000");
                 })
                 .sorted()
                 .collect(java.util.stream.Collectors.toList());
 
-            for (Path p : parts) {
-                for (String l : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+            for (java.nio.file.Path p : parts) {
+                for (String l : java.nio.file.Files.readAllLines(p, StandardCharsets.UTF_8)) {
                     if (!l.trim().isEmpty()) lines.add(l);
                 }
             }

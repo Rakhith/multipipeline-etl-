@@ -35,12 +35,12 @@
 set -euo pipefail
 
 # ---- defaults ----
-INPUT=""
-OUTPUT="/tmp/nasa-pig-out"
+INPUT="/user/hadoop/nasa-logs"
+OUTPUT="/user/hadoop/nasa-output-pig-3"
 DB_URL="jdbc:postgresql://localhost:5432/nosql"
 DB_USER="user"
 DB_PASS="password"
-EXEC_TYPE="local"
+EXEC_TYPE="mapreduce"
 BATCH_SIZE=10000
 PIPELINE_NAME="Apache-Pig"
 # export PIG_HOME=$HOME/pig

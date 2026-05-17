@@ -2,6 +2,29 @@
 ## DAS 839 – NoSQL Systems | End Semester Project
 
 ---
+Commands to Run
+```
+Ensure hadoop is properly working with namenodes. 
+
+Make sure Pig is present on the path. Also!!!
+# CAUTION::: cp /home/mrtechtroid/pig/lib/spark/commons-collections-3.2.2.jar \
+# $HADOOP_HOME/share/hadoop/common/lib/ Do this......
+# Use Hadoop 3.4.3 (or later) and Pig 0.18.0 (or later)
+
+
+Compile
+mvn clean package
+
+Hadoop
+hadoop jar target/nasa-etl-1.0.0-shaded.jar --input /user/hadoop/nasa-log
+s/ --output /user/hadoop/nasa-output --db-url jdbc:postgresql://localhost:5432/nosql --db-user user --db-pass password --batch 10000
+
+Pig
+./scripts/run_pig.sh 
+```
+
+
+
 
 ## Project Overview
 
