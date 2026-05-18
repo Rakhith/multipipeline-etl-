@@ -183,9 +183,9 @@ public class MongoETLDriver {
             long q1Start = System.currentTimeMillis();
             // List<String[]> q1Rows = Query1DailyTraffic.run(collection);
             AggregateIterable<Document> q1Docs = Query1DailyTraffic.run(collection);
+            int q1Loaded = DBLoader.loadQuery1(conn, q1Docs, runId);
             long q1End   = System.currentTimeMillis();
 
-            int q1Loaded = DBLoader.loadQuery1(conn, q1Docs, runId);
             batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
             saveQueryMetadata(conn, metadata, runId, 1, "Q1",
                               q1Start, q1End,
@@ -201,9 +201,9 @@ public class MongoETLDriver {
             long q2Start = System.currentTimeMillis();
             AggregateIterable<Document> q2Docs = Query2TopResources.run(collection);
             // List<String[]> q2Rows = Query2TopResources.run(collection);
+            int q2Loaded = DBLoader.loadQuery2(conn, q2Docs, runId);
             long q2End   = System.currentTimeMillis();
 
-            int q2Loaded = DBLoader.loadQuery2(conn, q2Docs, runId);
             metadata.setQ2RuntimeMs(q2End - q2Start);
             saveQueryBatchMetadataOnly(conn, runId, "Q2",
                                        q2End - q2Start,
@@ -217,9 +217,9 @@ public class MongoETLDriver {
             long q3Start = System.currentTimeMillis();
             AggregateIterable<Document> q3Docs = Query3HourlyError.run(collection);
             // List<String[]> q3Rows = Query3HourlyError.run(collection);
+            int q3Loaded = DBLoader.loadQuery3(conn, q3Docs, runId);
             long q3End   = System.currentTimeMillis();
 
-            int q3Loaded = DBLoader.loadQuery3(conn, q3Docs, runId);
             metadata.setQ3RuntimeMs(q3End - q3Start);
             saveQueryBatchMetadataOnly(conn, runId, "Q3",
                                        q3End - q3Start,
