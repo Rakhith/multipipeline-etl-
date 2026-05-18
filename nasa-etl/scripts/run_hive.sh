@@ -51,9 +51,9 @@
 
 set -euo pipefail
 
-export HIVE_HOME=/usr/local/hive
+export HIVE_HOME=${HIVE_HOME:-/usr/local/hive}
 export PATH=$PATH:$HIVE_HOME/bin
-export DERBY_HOME=~/db-derby-10.11.1.1-bin
+export DERBY_HOME=${DERBY_HOME:-~/db-derby-10.11.1.1-bin}
 export PATH=$PATH:$DERBY_HOME/bin
 # export CLASSPATH=$CLASSPATH:$DERBY_HOME/lib/derby.jar:$DERBY_HOME/lib/derbytools.jar
 
@@ -70,6 +70,7 @@ HIVE_DB="default"
 INPUT_TABLE="nasa_raw_logs"
 PIPELINE_NAME="Apache-Hive"
 BATCH_SIZE=10000
+QUERY_ARGS=()
 
 # ---- parse args --------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -86,6 +87,7 @@ while [[ $# -gt 0 ]]; do
     --input-table)   INPUT_TABLE="$2";   shift 2 ;;
     --pipeline-name) PIPELINE_NAME="$2"; shift 2 ;;
     --batch)         BATCH_SIZE="$2";    shift 2 ;;
+    --query)         QUERY_ARGS=("--query" "$2"); shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -164,4 +166,5 @@ exec java -cp "$HIVE_JAR" \
   --hive-url   "$HIVE_URL" \
   --input-table  "$INPUT_TABLE"  \
   --pipeline-name "$PIPELINE_NAME" \
-  --batch        "$BATCH_SIZE"
+  --batch        "$BATCH_SIZE" \
+  "${QUERY_ARGS[@]}"

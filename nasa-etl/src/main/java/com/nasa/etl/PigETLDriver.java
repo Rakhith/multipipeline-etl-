@@ -76,6 +76,7 @@ public class PigETLDriver {
         String execType      = DEFAULT_EXEC_TYPE;
         String pipelineName  = DEFAULT_PIPELINE_NAME;
         int    batchSize     = 10_000;
+        int    queryNum      = 0;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -88,11 +89,18 @@ public class PigETLDriver {
                 case "--exec-type"    : execType     = args[++i]; break;
                 case "--pipeline-name": pipelineName = args[++i]; break;
                 case "--batch"        : batchSize    = Integer.parseInt(args[++i]); break;
+                case "--query"        : queryNum     = Integer.parseInt(args[++i]); break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
         }
 
         if (inputPath == null || outputBase == null || dbUrl == null || pigJar == null) {
+            printUsage();
+            System.exit(1);
+        }
+
+        if (queryNum < 0 || queryNum > 3) {
+            System.err.println("ERROR: Invalid --query value. Must be 1, 2, or 3.");
             printUsage();
             System.exit(1);
         }
@@ -124,59 +132,65 @@ public class PigETLDriver {
         Map<Integer, Long> batchRecordCounts = null;
 
         // ---- Q1: Daily Traffic Summary ----
-        String q1Out = outputBase + "/q1";
-        deleteDir(q1Out);
-        long q1Start = System.currentTimeMillis();
-        runPigScript("query1_daily_traffic.pig", inputPath, q1Out,
-                     pigJar, batchSize, execType, runId);
-        long q1End = System.currentTimeMillis();
+        if (queryNum == 0 || queryNum == 1) {
+            String q1Out = outputBase + "/q1";
+            deleteDir(q1Out);
+            long q1Start = System.currentTimeMillis();
+            runPigScript("query1_daily_traffic.pig", inputPath, q1Out,
+                         pigJar, batchSize, execType, runId);
+            long q1End = System.currentTimeMillis();
 
-        batchRecordCounts = PigDBLoader.loadQuery1(conn, q1Out, runId);
-        long q1Runtime = q1End - q1Start;
+            batchRecordCounts = PigDBLoader.loadQuery1(conn, q1Out, runId);
+            long q1Runtime = q1End - q1Start;
 
-        metadata.setQ1RuntimeMs(q1Runtime);
-        metadata.setTotalBatches(batchRecordCounts.size());
-        long q1TotalRecords = batchRecordCounts.values().stream()
-                                               .mapToLong(Long::longValue).sum();
-        metadata.setTotalRecords(q1TotalRecords);
-        metadata.setAvgBatchSize(batchRecordCounts.isEmpty()
-                ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
-        // malformed count is embedded in counters file if available
-        metadata.setMalformedCount(readCounterFile(q1Out, "MALFORMED_RECORDS"));
+            metadata.setQ1RuntimeMs(q1Runtime);
+            metadata.setTotalBatches(batchRecordCounts.size());
+            long q1TotalRecords = batchRecordCounts.values().stream()
+                                                   .mapToLong(Long::longValue).sum();
+            metadata.setTotalRecords(q1TotalRecords);
+            metadata.setAvgBatchSize(batchRecordCounts.isEmpty()
+                    ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
+            // malformed count is embedded in counters file if available
+            metadata.setMalformedCount(readCounterFile(q1Out, "MALFORMED_RECORDS"));
 
-        saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
-        System.out.printf("[Q1] runtime=%,d ms | batches=%,d | records=%,d%n",
-                          q1Runtime, batchRecordCounts.size(), q1TotalRecords);
+            saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
+            System.out.printf("[Q1] runtime=%,d ms | batches=%,d | records=%,d%n",
+                              q1Runtime, batchRecordCounts.size(), q1TotalRecords);
+        }
 
         // ---- Q2: Top Requested Resources ----
-        String q2Out = outputBase + "/q2";
-        deleteDir(q2Out);
-        long q2Start = System.currentTimeMillis();
-        runPigScript("query2_top_resources.pig", inputPath, q2Out,
-                     pigJar, batchSize, execType, runId);
-        long q2End = System.currentTimeMillis();
+        if (queryNum == 0 || queryNum == 2) {
+            String q2Out = outputBase + "/q2";
+            deleteDir(q2Out);
+            long q2Start = System.currentTimeMillis();
+            runPigScript("query2_top_resources.pig", inputPath, q2Out,
+                         pigJar, batchSize, execType, runId);
+            long q2End = System.currentTimeMillis();
 
-        PigDBLoader.loadQuery2(conn, q2Out, runId);
-        long q2Runtime = q2End - q2Start;
-        metadata.setQ2RuntimeMs(q2Runtime);
-        saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
-        System.out.printf("[Q2] runtime=%,d ms | batches=%,d%n",
-                          q2Runtime, batchRecordCounts == null ? 0 : batchRecordCounts.size());
+            PigDBLoader.loadQuery2(conn, q2Out, runId);
+            long q2Runtime = q2End - q2Start;
+            metadata.setQ2RuntimeMs(q2Runtime);
+            saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
+            System.out.printf("[Q2] runtime=%,d ms | batches=%,d%n",
+                              q2Runtime, batchRecordCounts == null ? 0 : batchRecordCounts.size());
+        }
 
         // ---- Q3: Hourly Error Analysis ----
-        String q3Out = outputBase + "/q3";
-        deleteDir(q3Out);
-        long q3Start = System.currentTimeMillis();
-        runPigScript("query3_hourly_error.pig", inputPath, q3Out,
-                     pigJar, batchSize, execType, runId);
-        long q3End = System.currentTimeMillis();
+        if (queryNum == 0 || queryNum == 3) {
+            String q3Out = outputBase + "/q3";
+            deleteDir(q3Out);
+            long q3Start = System.currentTimeMillis();
+            runPigScript("query3_hourly_error.pig", inputPath, q3Out,
+                         pigJar, batchSize, execType, runId);
+            long q3End = System.currentTimeMillis();
 
-        PigDBLoader.loadQuery3(conn, q3Out, runId);
-        long q3Runtime = q3End - q3Start;
-        metadata.setQ3RuntimeMs(q3Runtime);
-        saveBatchMetadata(conn, runId, "Q3", q3Runtime, batchRecordCounts);
-        System.out.printf("[Q3] runtime=%,d ms | batches=%,d%n",
-                          q3Runtime, batchRecordCounts == null ? 0 : batchRecordCounts.size());
+            PigDBLoader.loadQuery3(conn, q3Out, runId);
+            long q3Runtime = q3End - q3Start;
+            metadata.setQ3RuntimeMs(q3Runtime);
+            saveBatchMetadata(conn, runId, "Q3", q3Runtime, batchRecordCounts);
+            System.out.printf("[Q3] runtime=%,d ms | batches=%,d%n",
+                              q3Runtime, batchRecordCounts == null ? 0 : batchRecordCounts.size());
+        }
 
         // ======== STOP RUNTIME CLOCK ========
         long globalEnd = System.currentTimeMillis();
@@ -349,6 +363,7 @@ public class PigETLDriver {
             "  --db-user     <username>                   \\\n" +
             "  --db-pass     <password>                   \\\n" +
             "  --pig-jar     <path/to/nasa-etl.jar>       \\\n" +
+            "  [--query      <1|2|3>]                     \\\n" +
             "  [--exec-type  local|mapreduce]             \\\n" +
             "  [--pipeline-name <name>]                   \\\n" +
             "  [--batch      <batch-size>]                \n\n" +

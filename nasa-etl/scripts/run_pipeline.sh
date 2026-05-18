@@ -32,6 +32,15 @@ DB_PASS="your_password_here"
 LOG_FILE_JUL="/tmp/NASA_access_log_Jul95"
 LOG_FILE_AUG="/tmp/NASA_access_log_Aug95"
 
+# Parse options
+QUERY_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --query) QUERY_ARGS=("--query" "$2"); shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
 # ---- END CONFIGURATION ----
 
 echo "=============================================="
@@ -96,7 +105,8 @@ hadoop jar "${JAR}" com.nasa.etl.ETLDriver \
     --db-url  "${DB_URL}"    \
     --db-user "${DB_USER}"   \
     --db-pass "${DB_PASS}"   \
-    --batch   ${BATCH_SIZE}
+    --batch   ${BATCH_SIZE} \
+    "${QUERY_ARGS[@]}"
 
 # 6. Print the report
 echo ""

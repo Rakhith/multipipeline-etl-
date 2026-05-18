@@ -43,6 +43,7 @@ DB_PASS="password"
 EXEC_TYPE="mapreduce"
 BATCH_SIZE=10000
 PIPELINE_NAME="Apache-Pig"
+QUERY_ARGS=()
 # export PIG_HOME=$HOME/pig
 # export PATH=$PATH:$PIG_HOME/bin
 export PIG_CLASSPATH=$HADOOP_HOME/etc/hadoop
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --exec-type)     EXEC_TYPE="$2";     shift 2 ;;
         --batch)         BATCH_SIZE="$2";    shift 2 ;;
         --pipeline-name) PIPELINE_NAME="$2"; shift 2 ;;
+        --query)         QUERY_ARGS=("--query" "$2"); shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -102,4 +104,5 @@ java -cp "$PIG_JAR" com.nasa.etl.PigETLDriver \
     --pig-jar      "$PIG_JAR"      \
     --exec-type    "$EXEC_TYPE"    \
     --batch        "$BATCH_SIZE"   \
-    --pipeline-name "$PIPELINE_NAME"
+    --pipeline-name "$PIPELINE_NAME" \
+    "${QUERY_ARGS[@]}"

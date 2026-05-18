@@ -54,6 +54,42 @@ import java.util.Map;
  *     --input      <local-log-file-or-dir>  \
  *     --mongo-uri  <mongodb-connection-uri>  \
  *     --database   <mongo-db-name>           \
+
+/**
+ * MongoETLDriver – Main entry point for the MongoDB pipeline of the
+ * NASA HTTP Log ETL Framework.
+ *
+ * This driver mirrors {@code ETLDriver} (the Hadoop MapReduce driver) in
+ * structure and output exactly so that both can be compared fairly:
+ *
+ *   Phase 1 – Ingestion
+ *     Reads raw NASA log files from the local filesystem, parses each line with
+ *     the shared {@link com.nasa.etl.common.LogRecord} parser, and inserts
+ *     documents into MongoDB in configurable batches using
+ *     {@link MongoLoader}.  Both valid and malformed records are stored;
+ *     the {@code malformed} flag filters them during the query phase.
+ *
+ *   Phase 2 – MapReduce queries
+ *     Runs the three analytical queries using MongoDB's server-side
+ *     {@code mapReduce} command.  Each query class exposes MAP_FUNCTION,
+ *     REDUCE_FUNCTION, (and for Q2/Q3) FINALIZE_FUNCTION strings that are
+ *     sent verbatim to the MongoDB engine, then iterates the inline results
+ *     back in Java — analogous to the Hadoop driver reading HDFS part files.
+ *
+ *   Phase 3 – Relational load
+ *     Passes the result rows from each query to {@link DBLoader}, which
+ *     bulk-inserts them into PostgreSQL / MySQL using the exact same schema
+ *     as the Hadoop pipeline.
+ *
+ *   Phase 4 – Metadata
+ *     Records run metadata (pipeline name, batch size, runtimes, record
+ *     counts) in the {@code run_metadata} and {@code batch_metadata} tables.
+ *
+ * Usage:
+ *   java -cp nasa-etl.jar com.nasa.etl.MongoETLDriver \
+ *     --input      <local-log-file-or-dir>  \
+ *     --mongo-uri  <mongodb-connection-uri>  \
+ *     --database   <mongo-db-name>           \
  *     --collection <mongo-collection-name>   \
  *     --db-url     <jdbc-url>                \
  *     --db-user    <db-username>             \
@@ -94,6 +130,7 @@ public class MongoETLDriver {
         String dbPass        = "";
         String pipelineName  = DEFAULT_PIPELINE_NAME;
         boolean dropFirst    = false;
+        int     queryNum     = 0;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -106,11 +143,18 @@ public class MongoETLDriver {
                 case "--db-pass":       dbPass         = args[++i]; break;
                 case "--pipeline-name": pipelineName   = args[++i]; break;
                 case "--drop":          dropFirst      = true; break;
+                case "--query":         queryNum       = Integer.parseInt(args[++i]); break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
         }
 
         if (inputPath == null || dbUrl == null) {
+            printUsage();
+            System.exit(1);
+        }
+
+        if (queryNum < 0 || queryNum > 3) {
+            System.err.println("ERROR: Invalid --query value. Must be 1, 2, or 3.");
             printUsage();
             System.exit(1);
         }
@@ -179,54 +223,60 @@ public class MongoETLDriver {
             Map<Integer, Long> batchRecordCounts = null;
 
             // ---- Q1 ----
-            System.out.println("\n[Q1] Running Daily Traffic MapReduce...");
-            long q1Start = System.currentTimeMillis();
-            // List<String[]> q1Rows = Query1DailyTraffic.run(collection);
-            AggregateIterable<Document> q1Docs = Query1DailyTraffic.run(collection);
-            int q1Loaded = DBLoader.loadQuery1(conn, q1Docs, runId);
-            long q1End   = System.currentTimeMillis();
+            if (queryNum == 0 || queryNum == 1) {
+                System.out.println("\n[Q1] Running Daily Traffic MapReduce...");
+                long q1Start = System.currentTimeMillis();
+                // List<String[]> q1Rows = Query1DailyTraffic.run(collection);
+                AggregateIterable<Document> q1Docs = Query1DailyTraffic.run(collection);
+                long q1End   = System.currentTimeMillis();
 
-            batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
-            saveQueryMetadata(conn, metadata, runId, 1, "Q1",
-                              q1Start, q1End,
-                              ingestStats.validRecords,
-                              ingestStats.malformedRecords,
-                              batchRecordCounts);
+                int q1Loaded = DBLoader.loadQuery1(conn, q1Docs, runId);
+                batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
+                saveQueryMetadata(conn, metadata, runId, 1, "Q1",
+                                  q1Start, q1End,
+                                  ingestStats.validRecords,
+                                  ingestStats.malformedRecords,
+                                  batchRecordCounts);
 
-            System.out.printf("[Q1] runtime=%,d ms | rows=%d%n",
-                q1End - q1Start, q1Loaded);
+                System.out.printf("[Q1] runtime=%,d ms | rows=%d%n",
+                    q1End - q1Start, q1Loaded);
+            }
 
             // ---- Q2 ----
-            System.out.println("\n[Q2] Running Top Resources MapReduce...");
-            long q2Start = System.currentTimeMillis();
-            AggregateIterable<Document> q2Docs = Query2TopResources.run(collection);
-            // List<String[]> q2Rows = Query2TopResources.run(collection);
-            int q2Loaded = DBLoader.loadQuery2(conn, q2Docs, runId);
-            long q2End   = System.currentTimeMillis();
+            if (queryNum == 0 || queryNum == 2) {
+                System.out.println("\n[Q2] Running Top Resources MapReduce...");
+                long q2Start = System.currentTimeMillis();
+                AggregateIterable<Document> q2Docs = Query2TopResources.run(collection);
+                // List<String[]> q2Rows = Query2TopResources.run(collection);
+                long q2End   = System.currentTimeMillis();
 
-            metadata.setQ2RuntimeMs(q2End - q2Start);
-            saveQueryBatchMetadataOnly(conn, runId, "Q2",
-                                       q2End - q2Start,
-                                       batchRecordCounts);
+                int q2Loaded = DBLoader.loadQuery2(conn, q2Docs, runId);
+                metadata.setQ2RuntimeMs(q2End - q2Start);
+                saveQueryBatchMetadataOnly(conn, runId, "Q2",
+                                           q2End - q2Start,
+                                           batchRecordCounts);
 
-            System.out.printf("[Q2] runtime=%,d ms | rows=%d%n",
-                q2End - q2Start, q2Loaded);
+                System.out.printf("[Q2] runtime=%,d ms | rows=%d%n",
+                    q2End - q2Start, q2Loaded);
+            }
 
             // ---- Q3 ----
-            System.out.println("\n[Q3] Running Hourly Error MapReduce...");
-            long q3Start = System.currentTimeMillis();
-            AggregateIterable<Document> q3Docs = Query3HourlyError.run(collection);
-            // List<String[]> q3Rows = Query3HourlyError.run(collection);
-            int q3Loaded = DBLoader.loadQuery3(conn, q3Docs, runId);
-            long q3End   = System.currentTimeMillis();
+            if (queryNum == 0 || queryNum == 3) {
+                System.out.println("\n[Q3] Running Hourly Error MapReduce...");
+                long q3Start = System.currentTimeMillis();
+                AggregateIterable<Document> q3Docs = Query3HourlyError.run(collection);
+                // List<String[]> q3Rows = Query3HourlyError.run(collection);
+                long q3End   = System.currentTimeMillis();
 
-            metadata.setQ3RuntimeMs(q3End - q3Start);
-            saveQueryBatchMetadataOnly(conn, runId, "Q3",
-                                       q3End - q3Start,
-                                       batchRecordCounts);
+                int q3Loaded = DBLoader.loadQuery3(conn, q3Docs, runId);
+                metadata.setQ3RuntimeMs(q3End - q3Start);
+                saveQueryBatchMetadataOnly(conn, runId, "Q3",
+                                           q3End - q3Start,
+                                           batchRecordCounts);
 
-            System.out.printf("[Q3] runtime=%,d ms | rows=%d%n",
-                q3End - q3Start, q3Loaded);
+                System.out.printf("[Q3] runtime=%,d ms | rows=%d%n",
+                    q3End - q3Start, q3Loaded);
+            }
 
             // ======== STOP RUNTIME CLOCK ========
             long globalEnd = System.currentTimeMillis();
@@ -357,12 +407,11 @@ public class MongoETLDriver {
             "  --db-url     <jdbc-url>                  \\\n" +
             "  --db-user    <db-username>               \\\n" +
             "  --db-pass    <db-password>               \\\n" +
+            "  [--query      <1|2|3>]                    \\\n" +
             "  [--mongo-uri  mongodb://localhost:27017]  \\\n" +
             "  [--database   nasa_etl]                  \\\n" +
             "  [--collection logs]                      \\\n" +
             "  [--drop]                                 \\\n" +
-            "  [--pipeline-name <label>]                \n\n" +
-            "JDBC URL examples:\n" +
             "  PostgreSQL : jdbc:postgresql://localhost:5432/nasa_etl\n" +
             "  MySQL      : jdbc:mysql://localhost:3306/nasa_etl"
         );

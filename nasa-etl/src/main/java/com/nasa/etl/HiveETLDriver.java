@@ -71,6 +71,7 @@ public class HiveETLDriver {
         String hiveUrl       = "jdbc:hive2://localhost:10000";
         String hiveUser      = System.getProperty("user.name", "");
         String hivePass      = "";
+        int    queryNum      = 0;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -88,11 +89,18 @@ public class HiveETLDriver {
                 case "--hive-url"     : hiveUrl      = args[++i]; break;
                 case "--hive-user"    : hiveUser     = args[++i]; break;
                 case "--hive-pass"    : hivePass     = args[++i]; break;
+                case "--query"        : queryNum     = Integer.parseInt(args[++i]); break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
         }
 
         if (inputDir == null || outputBase == null || dbUrl == null || hiveJar == null) {
+            printUsage();
+            System.exit(1);
+        }
+
+        if (queryNum < 0 || queryNum > 3) {
+            System.err.println("ERROR: Invalid --query value. Must be 1, 2, or 3.");
             printUsage();
             System.exit(1);
         }
@@ -130,9 +138,9 @@ public class HiveETLDriver {
             String q2Out = outputBase + "/q2";
             String q3Out = outputBase + "/q3";
             
-            deleteIfExists(q1Out);
-            deleteIfExists(q2Out);
-            deleteIfExists(q3Out);
+            if (queryNum == 0 || queryNum == 1) deleteIfExists(q1Out);
+            if (queryNum == 0 || queryNum == 2) deleteIfExists(q2Out);
+            if (queryNum == 0 || queryNum == 3) deleteIfExists(q3Out);
 
             Map<String, String> masterParams = new HashMap<>();
             masterParams.put("INPUT_DIR",   inputDir);
@@ -144,32 +152,38 @@ public class HiveETLDriver {
             masterParams.put("Q2_OUT",      q2Out);
             masterParams.put("Q3_OUT",      q3Out);
 
-            // Execute setup + all 3 queries in ONE beeline session
-            runMasterHivePipeline(masterParams, execType, hiveUrl, hiveUser, hivePass);
+            // Execute setup + selected queries in ONE beeline session
+            runMasterHivePipeline(masterParams, execType, hiveUrl, hiveUser, hivePass, queryNum);
 
             // ---- Load results sequentially into PostgreSQL ----
-            long q1Start = System.currentTimeMillis();
-            batchRecordCounts = HiveDBLoader.loadQuery1(conn, q1Out, runId);
-            long q1Runtime = System.currentTimeMillis() - q1Start;
-            metadata.setQ1RuntimeMs(q1Runtime);
-            
-            long q1TotalRecords = batchRecordCounts.values().stream().mapToLong(Long::longValue).sum();
-            metadata.setTotalRecords(q1TotalRecords);
-            metadata.setTotalBatches(batchRecordCounts.size());
-            metadata.setAvgBatchSize(batchRecordCounts.isEmpty() ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
-            saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
+            if (queryNum == 0 || queryNum == 1) {
+                long q1Start = System.currentTimeMillis();
+                batchRecordCounts = HiveDBLoader.loadQuery1(conn, q1Out, runId);
+                long q1Runtime = System.currentTimeMillis() - q1Start;
+                metadata.setQ1RuntimeMs(q1Runtime);
+                
+                long q1TotalRecords = batchRecordCounts.values().stream().mapToLong(Long::longValue).sum();
+                metadata.setTotalRecords(q1TotalRecords);
+                metadata.setTotalBatches(batchRecordCounts.size());
+                metadata.setAvgBatchSize(batchRecordCounts.isEmpty() ? 0.0 : (double) q1TotalRecords / batchRecordCounts.size());
+                saveBatchMetadata(conn, runId, "Q1", q1Runtime, batchRecordCounts);
+            }
 
-            long q2Start = System.currentTimeMillis();
-            HiveDBLoader.loadQuery2(conn, q2Out, runId);
-            long q2Runtime = System.currentTimeMillis() - q2Start;
-            metadata.setQ2RuntimeMs(q2Runtime);
-            saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
+            if (queryNum == 0 || queryNum == 2) {
+                long q2Start = System.currentTimeMillis();
+                HiveDBLoader.loadQuery2(conn, q2Out, runId);
+                long q2Runtime = System.currentTimeMillis() - q2Start;
+                metadata.setQ2RuntimeMs(q2Runtime);
+                saveBatchMetadata(conn, runId, "Q2", q2Runtime, batchRecordCounts);
+            }
 
-            long q3Start = System.currentTimeMillis();
-            HiveDBLoader.loadQuery3(conn, q3Out, runId);
-            long q3Runtime = System.currentTimeMillis() - q3Start;
-            metadata.setQ3RuntimeMs(q3Runtime);
-            saveBatchMetadata(conn, runId, "Q3", q3Runtime, batchRecordCounts);
+            if (queryNum == 0 || queryNum == 3) {
+                long q3Start = System.currentTimeMillis();
+                HiveDBLoader.loadQuery3(conn, q3Out, runId);
+                long q3Runtime = System.currentTimeMillis() - q3Start;
+                metadata.setQ3RuntimeMs(q3Runtime);
+                saveBatchMetadata(conn, runId, "Q3", q3Runtime, batchRecordCounts);
+            }
 
         } finally {
             // ======== STOP RUNTIME CLOCK ========
@@ -199,14 +213,20 @@ public class HiveETLDriver {
                                              String execType,
                                              String hiveUrl,
                                              String hiveUser,
-                                             String hivePass) throws Exception {
+                                             String hivePass,
+                                             int queryNum) throws Exception {
 
-        String[] scripts = {
-            "setup_table.hql",
-            "query1_daily_traffic.hql",
-            "query2_top_resources.hql",
-            "query3_hourly_error.hql"
-        };
+        List<String> scripts = new ArrayList<>();
+        scripts.add("setup_table.hql");
+        if (queryNum == 0 || queryNum == 1) {
+            scripts.add("query1_daily_traffic.hql");
+        }
+        if (queryNum == 0 || queryNum == 2) {
+            scripts.add("query2_top_resources.hql");
+        }
+        if (queryNum == 0 || queryNum == 3) {
+            scripts.add("query3_hourly_error.hql");
+        }
 
         StringBuilder masterContent = new StringBuilder();
         masterContent.append("-- Master Hive Pipeline Script\n");
@@ -407,6 +427,7 @@ public class HiveETLDriver {
             "  --db-user      <username>                  \\\n" +
             "  --db-pass      <password>                  \\\n" +
             "  --hive-jar     <path/to/nasa-etl.jar>      \\\n" +
+            "  [--query       <1|2|3>]                    \\\n" +
             "  [--hive-url    <beeline-jdbc-url>]         \\\n" +
             "  [--hive-user   <hive-username>]            \\\n" +
             "  [--hive-pass   <hive-password>]            \\\n" +

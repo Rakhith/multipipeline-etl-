@@ -64,6 +64,7 @@ public class ETLDriver extends Configured implements Tool {
         String dbPass     = null;
         String pipelineName = DEFAULT_PIPELINE_NAME;
         int    batchSize  = BatchedLineInputFormat.DEFAULT_BATCH_SIZE;
+        int    queryNum   = 0;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -74,11 +75,18 @@ public class ETLDriver extends Configured implements Tool {
                 case "--db-pass": dbPass     = args[++i]; break;
                 case "--pipeline-name": pipelineName = args[++i]; break;
                 case "--batch"  : batchSize  = Integer.parseInt(args[++i]); break;
+                case "--query"  : queryNum   = Integer.parseInt(args[++i]); break;
                 default: System.err.println("Unknown arg: " + args[i]);
             }
         }
 
         if (inputDir == null || outputBase == null || dbUrl == null) {
+            printUsage();
+            return 1;
+        }
+
+        if (queryNum < 0 || queryNum > 3) {
+            System.err.println("ERROR: Invalid --query value. Must be 1, 2, or 3.");
             printUsage();
             return 1;
         }
@@ -121,44 +129,50 @@ public class ETLDriver extends Configured implements Tool {
         Map<Integer, Long> batchRecordCounts = null;
 
         // ---- Q1 ----
-        String q1Out = outputBase + "/q1";
-        deleteIfExists(conf, q1Out);
-        long q1Start = System.currentTimeMillis();
-        Job q1Job = Query1DailyTraffic.buildJob(conf, inputDir, q1Out);
-        boolean q1ok = q1Job.waitForCompletion(true);
-        long q1End = System.currentTimeMillis();
-        if (!q1ok) { System.err.println("Q1 failed"); return 2; }
+        if (queryNum == 0 || queryNum == 1) {
+            String q1Out = outputBase + "/q1";
+            deleteIfExists(conf, q1Out);
+            long q1Start = System.currentTimeMillis();
+            Job q1Job = Query1DailyTraffic.buildJob(conf, inputDir, q1Out);
+            boolean q1ok = q1Job.waitForCompletion(true);
+            long q1End = System.currentTimeMillis();
+            if (!q1ok) { System.err.println("Q1 failed"); return 2; }
 
-        Counters q1c = q1Job.getCounters();
-        DBLoader.loadQuery1(conn, conf, q1Out, runId);
-        batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
-        saveQ1Metadata(conn, metadata, runId, "Q1", q1Start, q1End, q1c, batchRecordCounts);
+            Counters q1c = q1Job.getCounters();
+            DBLoader.loadQuery1(conn, conf, q1Out, runId);
+            batchRecordCounts = DBLoader.getQ1BatchRecordCounts(conn, runId);
+            saveQ1Metadata(conn, metadata, runId, "Q1", q1Start, q1End, q1c, batchRecordCounts);
+        }
 
         // ---- Q2 ----
-        String q2Out = outputBase + "/q2";
-        deleteIfExists(conf, q2Out);
-        long q2Start = System.currentTimeMillis();
-        Job q2Job = Query2TopResources.buildJob(conf, inputDir, q2Out);
-        boolean q2ok = q2Job.waitForCompletion(true);
-        long q2End = System.currentTimeMillis();
-        if (!q2ok) { System.err.println("Q2 failed"); return 3; }
+        if (queryNum == 0 || queryNum == 2) {
+            String q2Out = outputBase + "/q2";
+            deleteIfExists(conf, q2Out);
+            long q2Start = System.currentTimeMillis();
+            Job q2Job = Query2TopResources.buildJob(conf, inputDir, q2Out);
+            boolean q2ok = q2Job.waitForCompletion(true);
+            long q2End = System.currentTimeMillis();
+            if (!q2ok) { System.err.println("Q2 failed"); return 3; }
 
-        Counters q2c = q2Job.getCounters();
-        DBLoader.loadQuery2(conn, conf, q2Out, runId);
-        saveQueryBatchMetadata(conn, metadata, runId, "Q2", q2Start, q2End, q2c, batchRecordCounts);
+            Counters q2c = q2Job.getCounters();
+            DBLoader.loadQuery2(conn, conf, q2Out, runId);
+            saveQueryBatchMetadata(conn, metadata, runId, "Q2", q2Start, q2End, q2c, batchRecordCounts);
+        }
 
         // ---- Q3 ----
-        String q3Out = outputBase + "/q3";
-        deleteIfExists(conf, q3Out);
-        long q3Start = System.currentTimeMillis();
-        Job q3Job = Query3HourlyError.buildJob(conf, inputDir, q3Out);
-        boolean q3ok = q3Job.waitForCompletion(true);
-        long q3End = System.currentTimeMillis();
-        if (!q3ok) { System.err.println("Q3 failed"); return 4; }
+        if (queryNum == 0 || queryNum == 3) {
+            String q3Out = outputBase + "/q3";
+            deleteIfExists(conf, q3Out);
+            long q3Start = System.currentTimeMillis();
+            Job q3Job = Query3HourlyError.buildJob(conf, inputDir, q3Out);
+            boolean q3ok = q3Job.waitForCompletion(true);
+            long q3End = System.currentTimeMillis();
+            if (!q3ok) { System.err.println("Q3 failed"); return 4; }
 
-        Counters q3c = q3Job.getCounters();
-        DBLoader.loadQuery3(conn, conf, q3Out, runId);
-        saveQueryBatchMetadata(conn, metadata, runId, "Q3", q3Start, q3End, q3c, batchRecordCounts);
+            Counters q3c = q3Job.getCounters();
+            DBLoader.loadQuery3(conn, conf, q3Out, runId);
+            saveQueryBatchMetadata(conn, metadata, runId, "Q3", q3Start, q3End, q3c, batchRecordCounts);
+        }
 
         // ======== STOP RUNTIME CLOCK ========
         long globalEnd   = System.currentTimeMillis();
@@ -302,7 +316,8 @@ public class ETLDriver extends Configured implements Tool {
             "  --db-user <username>         \\\n" +
             "  --db-pass <password>         \\\n" +
             "  [--pipeline-name <name>]     \\\n" +
-            "  [--batch  <batch-size>]      \n\n" +
+            "  [--batch  <batch-size>]      \\\n" +
+            "  [--query  <1|2|3>]           \n\n" +
             "Examples:\n" +
             "  JDBC URL for PostgreSQL: jdbc:postgresql://localhost:5432/nasa_etl\n" +
             "  JDBC URL for MySQL:      jdbc:mysql://localhost:3306/nasa_etl"
