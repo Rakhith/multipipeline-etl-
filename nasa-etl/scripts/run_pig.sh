@@ -36,16 +36,16 @@ set -euo pipefail
 
 # ---- defaults ----
 INPUT="/user/hadoop/nasa-logs"
-OUTPUT="/user/hadoop/nasa-output-pig-3"
+OUTPUT="/user/hadoop/nasa-output-pig-6"
 DB_URL="jdbc:postgresql://localhost:5432/nosql"
 DB_USER="user"
 DB_PASS="password"
-EXEC_TYPE="mapreduce"
+EXEC_TYPE="mr"
 BATCH_SIZE=10000
 PIPELINE_NAME="Apache-Pig"
 QUERY_ARGS=()
-# export PIG_HOME=$HOME/pig
-# export PATH=$PATH:$PIG_HOME/bin
+export PIG_HOME=$HOME/pig
+export PATH=$PATH:$PIG_HOME/bin
 export PIG_CLASSPATH=$HADOOP_HOME/etc/hadoop
 export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
 echo $(pwd)
@@ -104,5 +104,5 @@ java -cp "$PIG_JAR" com.nasa.etl.PigETLDriver \
     --pig-jar      "$PIG_JAR"      \
     --exec-type    "$EXEC_TYPE"    \
     --batch        "$BATCH_SIZE"   \
-    --pipeline-name "$PIPELINE_NAME" \
+    --pipeline-name "$PIPELINE_NAME"
     "${QUERY_ARGS[@]}"

@@ -25,6 +25,9 @@ Pig
 Hive
 ./scripts/run_hive.sh --input hdfs:///user/hadoop/nasa-logs --output hdfs:///user/hadoop/nasa-hive-output --db-url jdbc:postgresql://localhost:5432/nosql
 
+Mongo
+java -cp target/nasa-etl-1.0.0-shaded.jar com.nasa.etl.Mon
+goETLDriver   --input input/ --mongo-uri mongodb://localhost:27018 --database nasa_etl --collection logs --db-url jdbc:postgresql://localhost:5432/nosql --db-user user --db-pass password --drop
 ```
 
 

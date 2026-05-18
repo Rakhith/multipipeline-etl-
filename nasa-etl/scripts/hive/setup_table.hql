@@ -105,6 +105,7 @@ SELECT
 FROM (
     SELECT parse_log_line(line) AS parsed
     FROM   ${INPUT_TABLE}
+    WHERE  TRIM(line) != ''  -- skip empty lines
 ) tmp
 WHERE parsed.malformed = 0
   AND parsed.log_date IS NOT NULL
