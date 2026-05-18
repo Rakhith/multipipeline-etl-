@@ -21,6 +21,10 @@ s/ --output /user/hadoop/nasa-output --db-url jdbc:postgresql://localhost:5432/n
 
 Pig
 ./scripts/run_pig.sh 
+
+Hive
+./scripts/run_hive.sh --input hdfs:///user/hadoop/nasa-logs --output hdfs:///user/hadoop/nasa-hive-output --db-url jdbc:postgresql://localhost:5432/nosql
+
 ```
 
 
