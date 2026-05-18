@@ -55,13 +55,13 @@ export HIVE_HOME=/usr/local/hive
 export PATH=$PATH:$HIVE_HOME/bin
 export DERBY_HOME=~/db-derby-10.11.1.1-bin
 export PATH=$PATH:$DERBY_HOME/bin
-export CLASSPATH=$CLASSPATH:$DERBY_HOME/lib/derby.jar:$DERBY_HOME/lib/derbytools.jar
+# export CLASSPATH=$CLASSPATH:$DERBY_HOME/lib/derby.jar:$DERBY_HOME/lib/derbytools.jar
 
 # ---- defaults ----------------------------------------------------------------
 INPUT=""
 OUTPUT=""
 DB_URL="jdbc:postgresql://localhost:5432/nosql"
-HIVE_URL="jdbc:hive2://"
+HIVE_URL="jdbc:hive2://localhost:10000"
 DB_USER="user"
 DB_PASS="password"
 HIVE_JAR=""
